@@ -1,0 +1,24 @@
+Loaded Prisma config from prisma.config.ts.
+
+Running seed command `tsx --require dotenv/config prisma/seed.ts` ...
+D:\POS-Cafe\odoo-pos-cafe\node_modules\@prisma\client\src\runtime\utils\validatePrismaClientOptions.ts:239
+      throw new PrismaClientConstructorValidationError(
+            ^
+
+PrismaClientConstructorValidationError: Unknown property datasources provided to PrismaClient constructor.
+Read more at https://pris.ly/d/client-constructor
+    at validatePrismaClientOptions (D:\POS-Cafe\odoo-pos-cafe\node_modules\@prisma\client\src\runtime\utils\validatePrismaClientOptions.ts:239:13)
+    at new t (D:\POS-Cafe\odoo-pos-cafe\node_modules\@prisma\client\src\runtime\getPrismaClient.ts:342:7)
+    at bcrypt (D:\POS-Cafe\odoo-pos-cafe\prisma\seed.ts:4:16)
+    at Object.<anonymous> (D:\POS-Cafe\odoo-pos-cafe\prisma\seed.ts:223:4)
+    at Module._compile (node:internal/modules/cjs/loader:1761:14)
+    at Object.transformer (D:\POS-Cafe\odoo-pos-cafe\node_modules\tsx\dist\register-D46fvsV_.cjs:3:1104)
+    at Module.load (node:internal/modules/cjs/loader:1481:32)
+    at Module._load (node:internal/modules/cjs/loader:1300:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:328:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:245:24)
+
+Node.js v24.11.1
+
+An error occurred while running the seed command:
+Error: Command failed with exit code 1: tsx --require dotenv/config prisma/seed.ts
