@@ -2,22 +2,140 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+/* ============================================
+   DARK THEME (default)
+   ============================================ */
+:root,
+[data-theme="dark"] {
+  /* Surfaces */
+  --bg:                    #081425;
+  --surface:               #081425;
+  --surface-dim:           #081425;
+  --surface-bright:        #2F3A4C;
+  --surface-lowest:        #040E1F;
+  --surface-low:           #111C2D;
+  --surface-container:     #152031;
+  --surface-high:          #1F2A3C;
+  --surface-highest:       #2A3548;
+  --surface-variant:       #2A3548;
+  --surface-tint:          #FFB95F;
+
+  /* Primary */
+  --primary:               #FFC174;
+  --primary-container:     #F59E0B;
+  --primary-fixed:         #FFDDB8;
+  --primary-fixed-dim:     #FFB95F;
+  --on-primary:            #472A00;
+  --on-primary-container:  #613B00;
+
+  /* Secondary */
+  --secondary:             #F0BD82;
+  --secondary-container:   #62400F;
+  --on-secondary:          #472A00;
+  --on-secondary-container:#DDAC72;
+
+  /* Tertiary */
+  --tertiary:              #8FD5FF;
+  --tertiary-container:    #1ABDFF;
+  --on-tertiary:           #00344A;
+  --on-tertiary-container: #004966;
+
+  /* Error */
+  --error:                 #FFB4AB;
+  --error-container:       #93000A;
+  --on-error:              #690005;
+  --on-error-container:    #FFDAD6;
+
+  /* Text */
+  --on-bg:                 #D8E3FB;
+  --on-surface:            #D8E3FB;
+  --on-surface-variant:    #D8C3AD;
+
+  /* Borders */
+  --outline:               #A08E7A;
+  --outline-variant:       #534434;
+
+  /* Inverse */
+  --inverse-surface:       #D8E3FB;
+  --inverse-on-surface:    #263143;
+  --inverse-primary:       #855300;
+
+  /* Typography */
+  --font-headline:         'Manrope', sans-serif;
+  --font-body:             'Inter', sans-serif;
+
+  /* Radius */
+  --radius-sm:             0.125rem;
+  --radius-md:             0.25rem;
+  --radius-lg:             0.5rem;
+  --radius-xl:             0.75rem;
+  --radius-full:           9999px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ============================================
+   LIGHT THEME
+   ============================================ */
+[data-theme="light"] {
+  /* Surfaces */
+  --bg:                    #F8FAFC;
+  --surface:               #FFFFFF;
+  --surface-dim:           #E2E8F0;
+  --surface-bright:        #FFFFFF;
+  --surface-lowest:        #FFFFFF;
+  --surface-low:           #F1F5F9;
+  --surface-container:     #E7ECF2;
+  --surface-high:          #DDE3EB;
+  --surface-highest:       #D4DAE2;
+  --surface-variant:       #E2E8F0;
+  --surface-tint:          #F59E0B;
+
+  /* Primary */
+  --primary:               #855300;
+  --primary-container:     #FFDDB8;
+  --primary-fixed:         #FFDDB8;
+  --primary-fixed-dim:     #FFB95F;
+  --on-primary:            #FFFFFF;
+  --on-primary-container:  #2A1700;
+
+  /* Secondary */
+  --secondary:             #7D5700;
+  --secondary-container:   #FFDDB8;
+  --on-secondary:          #FFFFFF;
+  --on-secondary-container:#2A1700;
+
+  /* Tertiary */
+  --tertiary:              #006589;
+  --tertiary-container:    #C5E7FF;
+  --on-tertiary:           #FFFFFF;
+  --on-tertiary-container: #001E2D;
+
+  /* Error */
+  --error:                 #BA1A1A;
+  --error-container:       #FFDAD6;
+  --on-error:              #FFFFFF;
+  --on-error-container:    #410002;
+
+  /* Text */
+  --on-bg:                 #1E293B;
+  --on-surface:            #1E293B;
+  --on-surface-variant:    #4A4639;
+
+  /* Borders */
+  --outline:               #7C7768;
+  --outline-variant:       #CEC6B4;
+
+  /* Inverse */
+  --inverse-surface:       #283044;
+  --inverse-on-surface:    #DAE2FD;
+  --inverse-primary:       #FFB95F;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  color: var(--on-bg);
+  background: var(--bg);
+  font-family: var(--font-body);
 }
 
 @layer utilities {

@@ -1,4 +1,4 @@
-export default function SelfOrderPage({ params }: { params: { token: string } }) {
+export default function SelfOrderPage() {
   return (
     <div>
       <h1>Self Order</h1>

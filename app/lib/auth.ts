@@ -31,7 +31,7 @@ export async function verifyToken(token: string): Promise<TokenPayload | null> {
       algorithms: ["HS256"],
     });
     return payload as unknown as TokenPayload;
-  } catch (error) {
+  } catch {
     return null;
   }
 }
