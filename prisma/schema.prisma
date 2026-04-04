@@ -7,7 +7,148 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
-// Paste your schema models below this line
+model User {
+  id           String    @id @default(uuid())
+  name         String
+  email        String    @unique
+  passwordHash String
+  role         Role      @default(CASHIER)
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+}
+
+enum Role {
+  ADMIN
+  CASHIER
+}
+
+model Product {
+  id          String           @id @default(uuid())
+  name        String
+  category    String
+  price       Float
+  unit        String
+  tax         Float            @default(0)
+  description String?
+  active      Boolean          @default(true)
+  variants    ProductVariant[]
+  orderItems  OrderItem[]
+}
+
+model ProductVariant {
+  id         String  @id @default(uuid())
+  productId  String
+  attribute  String
+  value      String
+  extraPrice Float   @default(0)
+  product    Product @relation(fields: [productId], references: [id])
+}
+
+model Floor {
+  id     String  @id @default(uuid())
+  name   String
+  tables Table[]
+}
+
+model Table {
+  id          String      @id @default(uuid())
+  floorId     String
+  tableNumber String
+  seats       Int
+  status      TableStatus @default(EMPTY)
+  active      Boolean     @default(true)
+  floor       Floor       @relation(fields: [floorId], references: [id])
+  orders      Order[]
+}
+
+enum TableStatus {
+  EMPTY
+  OCCUPIED
+  SENT_TO_KITCHEN
+  WAITING_PAYMENT
+}
+
+model Session {
+  id         String    @id @default(uuid())
+  userId     String
+  openedAt   DateTime  @default(now())
+  closedAt   DateTime?
+  totalSales Float     @default(0)
+  user       User      @relation(fields: [userId], references: [id])
+  orders     Order[]
+}
+
+model Order {
+  id          String      @id @default(uuid())
+  sessionId   String
+  tableId     String
+  status      OrderStatus @default(DRAFT)
+  orderNumber String      @unique
+  source      OrderSource @default(CASHIER)
+  createdAt   DateTime    @default(now())
+  session     Session     @relation(fields: [sessionId], references: [id])
+  table       Table       @relation(fields: [tableId], references: [id])
+  items       OrderItem[]
+  payment     Payment?
+}
+
+enum OrderStatus {
+  DRAFT
+  SENT_TO_KITCHEN
+  COMPLETED
+  PAID
+}
+
+enum OrderSource {
+  CASHIER
+  SELF_ORDER
+}
+
+model OrderItem {
+  id            String        @id @default(uuid())
+  orderId       String
+  productId     String
+  quantity      Int
+  unitPrice     Float
+  kitchenStatus KitchenStatus @default(TO_COOK)
+  order         Order         @relation(fields: [orderId], references: [id])
+  product       Product       @relation(fields: [productId], references: [id])
+}
+
+enum KitchenStatus {
+  TO_COOK
+  PREPARING
+  COMPLETED
+}
+
+model Payment {
+  id      String        @id @default(uuid())
+  orderId String        @unique
+  method  PaymentMethod
+  amount  Float
+  paidAt  DateTime      @default(now())
+  order   Order         @relation(fields: [orderId], references: [id])
+}
+
+enum PaymentMethod {
+  CASH
+  DIGITAL
+  UPI
+}
+
+model PaymentMethodConfig {
+  id      String        @id @default(uuid())
+  type    PaymentMethod @unique
+  enabled Boolean       @default(true)
+  upiId   String?
+}
+
+model SelfOrderToken {
+  id        String   @id @default(uuid())
+  tableId   String
+  sessionId String
+  token     String   @unique
+  createdAt DateTime @default(now())
+}
