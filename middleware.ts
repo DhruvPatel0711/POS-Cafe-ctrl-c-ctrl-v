@@ -1,43 +1,80 @@
-import { NextRequest, NextResponse } from "next/server";
-import { jwtVerify } from "jose";
+import { NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
 
-// Safe fallback matching auth.ts
-const secretKey = process.env.JWT_SECRET || "odoo-pos-cafe-super-secret-key!2026";
-const encodedKey = new TextEncoder().encode(secretKey);
+// ── Inline role config (can't import .ts modules in edge middleware) ──
+const SESSION_COOKIE = 'pos_session'
 
-export async function middleware(req: NextRequest) {
-  // Only protect API routes (excluding auth endpoints)
-  if (req.nextUrl.pathname.startsWith("/api/") && !req.nextUrl.pathname.startsWith("/api/auth/")) {
-    const authHeader = req.headers.get("Authorization");
+const PUBLIC_PREFIXES = ['/landing', '/auth', '/demo', '/unauthorized']
 
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return NextResponse.json(
-        { error: "Unauthorized: Missing or invalid token format" },
-        { status: 401 }
-      );
-    }
+const ROLE_CONFIG: Record<string, { home: string; prefixes: string[] }> = {
+  admin:   { home: '/admin/dashboard',  prefixes: ['/admin', '/pos', '/kitchen'] },
+  manager: { home: '/admin/dashboard',  prefixes: ['/admin', '/pos'] },
+  cashier: { home: '/pos/floor',        prefixes: ['/pos'] },
+  kitchen: { home: '/kitchen/display',  prefixes: ['/kitchen'] },
+  waiter:  { home: '/pos/floor',        prefixes: ['/pos'] },
+}
 
-    const token = authHeader.split(" ")[1];
+function parseSession(cookieValue: string | undefined): { role: string; email: string } | null {
+  if (!cookieValue) return null
+  try {
+    const parsed = JSON.parse(decodeURIComponent(cookieValue))
+    if (parsed.role && parsed.email) return parsed
+    return null
+  } catch {
+    return null
+  }
+}
 
-    try {
-      await jwtVerify(token, encodedKey, {
-        algorithms: ["HS256"],
-      });
-      // Token is valid, proceed
-      return NextResponse.next();
-    } catch (error) {
-      return NextResponse.json(
-        { error: "Unauthorized: Invalid or expired token" },
-        { status: 401 }
-      );
-    }
+export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
+  // ── 1. Root → Landing ──────────────────────────────────────────
+  if (pathname === '/') {
+    return NextResponse.redirect(new URL('/landing', request.url))
   }
 
-  return NextResponse.next();
+  // ── 2. Parse session ───────────────────────────────────────────
+  const rawCookie = request.cookies.get(SESSION_COOKIE)?.value
+  const session = parseSession(rawCookie)
+
+  // ── 3. Public routes — allow everyone ──────────────────────────
+  const isPublic = PUBLIC_PREFIXES.some(
+    prefix => pathname === prefix || pathname.startsWith(prefix + '/')
+  )
+
+  if (isPublic) {
+    // If already logged in and hitting /auth/*, redirect to their home
+    if (session && pathname.startsWith('/auth')) {
+      const config = ROLE_CONFIG[session.role]
+      if (config) {
+        return NextResponse.redirect(new URL(config.home, request.url))
+      }
+    }
+    return NextResponse.next()
+  }
+
+  // ── 4. Not authenticated → login ──────────────────────────────
+  if (!session) {
+    const loginUrl = new URL('/auth/login', request.url)
+    loginUrl.searchParams.set('redirect', pathname)
+    return NextResponse.redirect(loginUrl)
+  }
+
+  // ── 5. Role-Based Access Control ──────────────────────────────
+  const config = ROLE_CONFIG[session.role]
+  if (!config) {
+    return NextResponse.redirect(new URL('/unauthorized', request.url))
+  }
+
+  const isAllowed = config.prefixes.some(prefix => pathname.startsWith(prefix))
+
+  if (!isAllowed) {
+    return NextResponse.redirect(new URL('/unauthorized', request.url))
+  }
+
+  return NextResponse.next()
 }
 
 export const config = {
-  matcher: [
-    "/api/:path*",
-  ],
-};
+  matcher: ['/((?!api|_next/static|_next/image|favicon.ico|images).*)'],
+}

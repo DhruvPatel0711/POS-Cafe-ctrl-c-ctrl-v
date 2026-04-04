@@ -1,21 +1,17 @@
-import type { Metadata } from "next";
-import "./globals.css";
+import type { Metadata } from 'next'
+import './globals.css'
 
 export const metadata: Metadata = {
-  title: "Odoo POS Cafe",
-  description: "Point of Sale for Cafe operations inspired by Odoo",
-};
+  title: 'Odoo POS Cafe',
+  description: 'Comprehensive Restaurant Point of Sale System',
+}
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" data-theme="dark">
-      <body className="antialiased bg-bg text-on-bg">
+    <html lang="en">
+      <body>
         {children}
       </body>
     </html>
-  );
+  )
 }
