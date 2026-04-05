@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { ShieldX, ArrowLeft, LogOut } from 'lucide-react'
 import { logout, getSession } from '@/lib/auth'
@@ -7,8 +8,17 @@ import { getHomeForRole } from '@/lib/roles'
 import type { UserRole } from '@/lib/roles'
 
 export default function UnauthorizedPage() {
-  const session = getSession()
+  const [session, setSession] = useState<any>(null)
+  const [isClient, setIsClient] = useState(false)
+
+  useEffect(() => {
+    setSession(getSession())
+    setIsClient(true)
+  }, [])
+
   const homePath = session ? getHomeForRole(session.role as UserRole) : '/auth/login'
+
+  if (!isClient) return null // Prevent hydration mismatch
 
   return (
     <div style={{

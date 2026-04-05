@@ -70,11 +70,19 @@ export default function LandingPage() {
           </div>
         </div>
         
-        {/* Mockup Prev */}
+        {/* Video Mockup */}
         <div style={{ maxWidth: 1000, margin: '60px auto 0', position: 'relative' }}>
           <div style={{ background: 'white', padding: 8, borderRadius: 24, border: '1px solid var(--border-light)', boxShadow: '0 24px 64px rgba(0,0,0,0.08)' }}>
-            <div style={{ background: 'var(--bg-canvas)', borderRadius: 16, height: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
-              <MonitorPlay size={48} opacity={0.2} />
+            <div style={{ background: 'black', borderRadius: 16, overflow: 'hidden', display: 'flex', aspectRatio: '16/9' }}>
+               {/* Replace src with your own video URL like '/promo.mp4' */}
+               <video 
+                 autoPlay 
+                 loop 
+                 muted 
+                 playsInline 
+                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                 src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
+               />
             </div>
           </div>
         </div>

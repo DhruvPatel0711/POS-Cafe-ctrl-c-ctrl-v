@@ -1,6 +1,5 @@
 'use client'
-import { useState } from 'react'
-import { transactions, paymentBreakdown } from '@/lib/mockData'
+import { useState, useEffect } from 'react'
 import { CreditCard, Smartphone, Banknote, Globe } from 'lucide-react'
 import Link from 'next/link'
 import PaymentMethodPanel from '@/components/PaymentMethodPanel'
@@ -20,6 +19,27 @@ const methodIcons: Record<string, any> = {
 
 export default function PaymentsPage() {
   const [isPanelOpen, setIsPanelOpen] = useState(false)
+  const [transactions, setTransactions] = useState<any[]>([])
+  const [paymentBreakdown, setPaymentBreakdown] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/payment-transactions').then(res => res.json()),
+      fetch('/api/reports/dashboard').then(res => res.json())
+    ]).then(([txns, dashboard]) => {
+      setTransactions(txns || [])
+      setPaymentBreakdown(dashboard?.paymentBreakdown || [])
+      setLoading(false)
+    }).catch(err => {
+      console.error('Failed to load payments data', err)
+      setLoading(false)
+    })
+  }, [])
+
+  if (loading) {
+    return <div style={{ padding: 40 }}>Loading payments data...</div>
+  }
 
   return (
     <div className="animate-fade-in">
@@ -37,8 +57,11 @@ export default function PaymentsPage() {
       </div>
 
       <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 24 }}>
+        {paymentBreakdown.length === 0 && (
+          <div style={{ gridColumn: 'span 4', padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>No payment analytics available today</div>
+        )}
         {paymentBreakdown.map((p) => {
-          const Icon = methodIcons[p.method]
+          const Icon = methodIcons[p.method] || Banknote
           return (
             <div className="metric-card" key={p.method} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -56,11 +79,11 @@ export default function PaymentsPage() {
                 ₹{p.amount.toLocaleString()}
               </div>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 }}>
-                {p.pct}% of total
+                {Math.round(p.pct)}% of total
               </div>
               <div style={{ height: 4, background: '#f0f0f0', borderRadius: 6, marginTop: 6, overflow: 'hidden' }}>
                 <div style={{
-                  height: '100%', width: `${p.pct}%`,
+                  height: '100%', width: `${Math.round(p.pct)}%`,
                   background: p.color, borderRadius: 6
                 }} />
               </div>
@@ -72,7 +95,6 @@ export default function PaymentsPage() {
       <div className="table-card">
         <div className="table-header-row">
           <span className="table-title">Recent Transactions</span>
-          <button className="btn btn-ghost btn-sm" id="view-all-txn-btn">View All</button>
         </div>
         <table className="data-table">
           <thead>
@@ -87,8 +109,13 @@ export default function PaymentsPage() {
             </tr>
           </thead>
           <tbody>
+            {transactions.length === 0 && (
+              <tr>
+                <td colSpan={7} style={{ textAlign: 'center', padding: 32, color: 'var(--text-muted)' }}>No transactions found</td>
+              </tr>
+            )}
             {transactions.map(t => {
-              const Icon = methodIcons[t.method]
+              const Icon = methodIcons[t.method] || Banknote
               return (
                 <tr key={t.id} id={`txn-row-${t.id}`}>
                   <td style={{ fontFamily: 'monospace', fontSize: 12.5, color: 'var(--text-secondary)' }}>{t.id}</td>
@@ -101,7 +128,7 @@ export default function PaymentsPage() {
                   </td>
                   <td style={{ fontWeight: 700 }}>₹{t.amount.toLocaleString()}</td>
                   <td style={{ color: 'var(--text-secondary)' }}>{t.cashier}</td>
-                  <td><span className={`badge ${statusStyle[t.status]}`}>{t.status}</span></td>
+                  <td><span className={`badge ${statusStyle[t.status] || 'badge-green'}`}>{t.status}</span></td>
                   <td style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>{t.time}</td>
                 </tr>
               )
@@ -114,3 +141,4 @@ export default function PaymentsPage() {
     </div>
   )
 }
+

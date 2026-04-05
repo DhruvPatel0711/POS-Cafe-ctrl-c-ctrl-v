@@ -1,6 +1,5 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { floors, menuItems } from '@/lib/mockData'
 import { Plus, Users, Clock, ShoppingBag } from 'lucide-react'
 import TableActionModal, {
   type CartItem,
@@ -23,33 +22,6 @@ const statusDot: Record<string, string> = {
   maintenance: '#e22134',
 }
 
-function buildSeedOrders(): Record<number, TableOrder> {
-  const seed: Array<[number, string, Array<[number, number]>]> = [
-    [2,  '#ORD-1040', [[4,2],[5,4],[10,2]]],
-    [3,  '#ORD-1041', [[1,1],[8,2]]],
-    [7,  '#ORD-1042', [[6,1],[7,1],[12,2]]],
-    [9,  '#ORD-1043', [[9,2],[14,2]]],
-    [12, '#ORD-1044', [[2,2],[8,3]]],
-  ]
-
-  const orders: Record<number, TableOrder> = {}
-  for (const [tableId, orderId, itemPairs] of seed) {
-    const items: CartItem[] = itemPairs.map(([itemId, qty]) => {
-      const m = menuItems.find(i => i.id === itemId)!
-      return {
-        id: `seed-${tableId}-${itemId}`,
-        itemId,
-        name: m.name,
-        price: m.price,
-        qty,
-        taxRate: m.tax,
-      }
-    })
-    orders[tableId] = { orderId, items, status: 'active', startedAt: 'Earlier' }
-  }
-  return orders
-}
-
 type FloorData = {
   id: number
   name: string
@@ -58,20 +30,23 @@ type FloorData = {
 
 export default function POSFloorPage() {
   const [activeFloor, setActiveFloor] = useState(1)
-  const [allFloors, setAllFloors] = useState<FloorData[]>(
-    floors.map(f => ({ ...f, tables: f.tables.map(t => ({ ...t })) as FloorTable[] }))
-  )
-  const [tableOrders, setTableOrders] = useState<Record<number, TableOrder>>(buildSeedOrders())
+  const [allFloors, setAllFloors] = useState<FloorData[]>([])
+  const [tableOrders, setTableOrders] = useState<Record<number, TableOrder>>({})
   const [reservations, setReservations] = useState<Record<number, ReservationInfo>>({})
   const [selectedTable, setSelectedTable] = useState<FloorTable | null>(null)
   const [isLoaded, setIsLoaded] = useState(false)
 
   useEffect(() => {
+    fetch('/api/floors').then(r => r.json()).then(data => {
+      if (data.length > 0) {
+        setAllFloors(data)
+        setActiveFloor(data[0].id)
+      }
+    }).catch(console.error)
+
     try {
-      const sFloors = localStorage.getItem('floor_allFloors')
       const sOrders = localStorage.getItem('floor_tableOrders')
       const sRes = localStorage.getItem('floor_reservations')
-      if (sFloors) setAllFloors(JSON.parse(sFloors))
       if (sOrders) setTableOrders(JSON.parse(sOrders))
       if (sRes) setReservations(JSON.parse(sRes))
     } catch(e) {}
@@ -80,13 +55,13 @@ export default function POSFloorPage() {
 
   useEffect(() => {
     if (isLoaded) {
-      localStorage.setItem('floor_allFloors', JSON.stringify(allFloors))
       localStorage.setItem('floor_tableOrders', JSON.stringify(tableOrders))
       localStorage.setItem('floor_reservations', JSON.stringify(reservations))
     }
   }, [allFloors, tableOrders, reservations, isLoaded])
 
-  const floor = allFloors.find(f => f.id === activeFloor)!
+  const floor = allFloors.find(f => f.id === activeFloor)
+  if (!floor) return <div style={{ padding: 40 }}>Loading floor plan...</div>
 
   const counts = {
     available:   floor.tables.filter(t => t.status === 'available').length,
@@ -103,31 +78,12 @@ export default function POSFloorPage() {
     setSelectedTable(prev => prev?.id === tableId ? { ...prev, ...patch } : prev)
   }
 
-  const sendToKitchen = (tableId: number, orderId: string, items: CartItem[]) => {
+  const sendToKitchenAPI = async (dbOrderId: number) => {
     try {
-      const kdsStr = localStorage.getItem('kitchen_tickets_state')
-      let kds: any[] = []
-      if (kdsStr) kds = JSON.parse(kdsStr)
-      if (!Array.isArray(kds)) kds = []
-
-      let tName = `T${tableId}`
-      for(const f of allFloors) {
-        const tb = f.tables.find(t => t.id === tableId)
-        if (tb) tName = tb.name
-      }
-
-      kds.push({
-        id: `KT-${Math.floor(100+Math.random()*900)}`,
-        orderId,
-        table: tName,
-        priority: 'normal',
-        status: 'to_cook',
-        elapsedSeconds: 0,
-        elapsed: '00:00',
-        items: items.map(i => ({ name: i.name, qty: i.qty, done: false }))
+      await fetch(`/api/orders/${dbOrderId}/send-to-kitchen`, {
+        method: 'POST',
       })
-      localStorage.setItem('kitchen_tickets_state', JSON.stringify(kds))
-    } catch(e) { console.error('Failed to send to KDS', e) }
+    } catch(e) { console.error('Failed to send to kitchen via API', e) }
   }
 
   const handleBook = (tableId: number, info: ReservationInfo) => {
@@ -138,31 +94,79 @@ export default function POSFloorPage() {
     updateTable(tableId, { status: 'reserved', reservation: `${info.guestName} · ${timeLabel}` })
   }
 
-  const handleStartOrder = (tableId: number, items: CartItem[]) => {
-    const orderId = `#ORD-${Math.floor(1000 + Math.random()*9000)}`
-    setTableOrders(prev => ({
-      ...prev,
-      [tableId]: { orderId, items, status: 'active', startedAt: 'Just now' },
-    }))
-    updateTable(tableId, { status: 'occupied', order: orderId, duration: '0 min', amount: 0 })
-    sendToKitchen(tableId, orderId, items)
+  const handleStartOrder = async (tableId: number, items: CartItem[]) => {
+    try {
+      // Create order via API so it persists in the database
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          table_id: tableId,
+          source: 'cashier',
+          items: items.map(i => ({
+            itemId: i.itemId,
+            name: i.name,
+            price: i.price,
+            qty: i.qty,
+            taxRate: i.taxRate,
+            variant: i.variant || null,
+          })),
+        }),
+      })
+      if (!res.ok) throw new Error('Failed to create order')
+      const order = await res.json()
+      const orderId = order.order_number || `#ORD-${order.id}`
+      
+      setTableOrders(prev => ({
+        ...prev,
+        [tableId]: { orderId, items, status: 'active', startedAt: 'Just now', dbOrderId: order.id },
+      }))
+      updateTable(tableId, { status: 'occupied', order: orderId, duration: '0 min', amount: 0 })
+
+      // Send to kitchen via DB API (creates kitchen_ticket in PostgreSQL)
+      await sendToKitchenAPI(order.id)
+    } catch (e) {
+      console.error('Failed to start order', e)
+    }
   }
 
-  const handleAddItems = (tableId: number, newItems: CartItem[]) => {
-    setTableOrders(prev => {
-      const existing = prev[tableId]
-      if (!existing) return prev
-      const merged = [...existing.items]
-      for (const ni of newItems) {
-        const found = merged.find(m => m.itemId === ni.itemId)
-        if (found) found.qty += ni.qty
-        else merged.push(ni)
+  const handleAddItems = async (tableId: number, newItems: CartItem[]) => {
+    const existing = tableOrders[tableId]
+    if (!existing) return
+
+    const merged = [...existing.items]
+    for (const ni of newItems) {
+      const found = merged.find(m => m.itemId === ni.itemId)
+      if (found) found.qty += ni.qty
+      else merged.push(ni)
+    }
+    const newTotal = merged.reduce((s, c) => s + c.price * c.qty * (1 + (c.taxRate||0)/100), 0)
+    updateTable(tableId, { amount: Math.round(newTotal) })
+
+    // Add items to existing DB order and send to kitchen
+    if (existing.dbOrderId) {
+      try {
+        await fetch(`/api/orders/${existing.dbOrderId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            add_items: newItems.map(i => ({
+              itemId: i.itemId,
+              name: i.name,
+              price: i.price,
+              qty: i.qty,
+              taxRate: i.taxRate,
+              variant: i.variant || null,
+            })),
+          }),
+        })
+        await sendToKitchenAPI(existing.dbOrderId)
+      } catch (e) {
+        console.error('Failed to add items via API', e)
       }
-      const newTotal = merged.reduce((s, c) => s + c.price * c.qty * (1 + (c.taxRate||0)/100), 0)
-      updateTable(tableId, { amount: Math.round(newTotal) })
-      sendToKitchen(tableId, existing.orderId, newItems)
-      return { ...prev, [tableId]: { ...existing, items: merged } }
-    })
+    }
+
+    setTableOrders(prev => ({ ...prev, [tableId]: { ...existing, items: merged } }))
   }
 
   const handleCheckout = (tableId: number) => {
@@ -201,8 +205,9 @@ export default function POSFloorPage() {
   }
 
   return (
-    <div className="animate-fade-in" style={{ padding: '24px 32px' }}>
-      <div className="page-header">
+    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+      <div style={{ padding: '24px 32px 0 32px', flexShrink: 0 }}>
+        <div className="page-header">
         <div>
           <h1 className="page-title">Floor Plan</h1>
           <div className="page-subtitle">Click any table to manage orders, reservations & payments</div>
@@ -250,9 +255,11 @@ export default function POSFloorPage() {
           </button>
         ))}
       </div>
+      </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 14 }}>
-        {floor.tables.map(table => {
+      <div style={{ flex: 1, overflowY: 'auto', padding: '0 32px 24px 32px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(168px, 1fr))', gap: 14 }}>
+          {floor.tables.map(table => {
           const s = statusColors[table.status] || statusColors.available
           const dot = statusDot[table.status]
           const order = tableOrders[table.id]
@@ -321,6 +328,7 @@ export default function POSFloorPage() {
             </div>
           )
         })}
+        </div>
       </div>
 
       <TableActionModal

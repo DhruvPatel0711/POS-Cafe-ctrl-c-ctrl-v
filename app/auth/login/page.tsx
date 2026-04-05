@@ -130,19 +130,7 @@ export default function LoginPage() {
           </Link>
         </div>
 
-        {/* Demo hint */}
-        <div style={{
-          marginTop: 24, padding: '12px 16px', background: 'var(--bg-canvas)',
-          borderRadius: 10, border: '1px solid var(--border-light)',
-        }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)', marginBottom: 6 }}>Quick Login Hints</div>
-          <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
-            • <strong>admin@</strong>cafe.com → Admin Dashboard<br/>
-            • <strong>kitchen@</strong>cafe.com → Kitchen Display<br/>
-            • Any other email → Cashier POS<br/>
-            • Password: any 3+ chars
-          </div>
-        </div>
+
       </div>
     </div>
   )

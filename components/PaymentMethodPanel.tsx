@@ -202,7 +202,25 @@ export default function PaymentMethodPanel({
 
         <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border-light)', display: 'flex', justifyContent: 'flex-end', gap: 12, background: 'var(--bg-card)' }}>
           <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={onClose}>
+          <button className="btn btn-primary" onClick={async () => {
+            try {
+              await fetch('/api/payment-methods', {
+                method: initialData?.id ? 'PUT' : 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  id: method.id,
+                  name: method.name || method.type, // fallback
+                  type: method.type,
+                  is_active: method.isActive,
+                  upi_id: method.upiId,
+                  merchant_name: method.merchantName
+                })
+              })
+              onClose()
+            } catch (e) {
+              console.error('Failed to save config', e)
+            }
+          }}>
             {initialData ? 'Update Method' : 'Save Payment Configuration'}
           </button>
         </div>

@@ -15,32 +15,63 @@ const DENOMINATIONS = [
 export default function SessionManagerModal({
   isOpen,
   onClose,
-  sessionState = 'closed'
+  sessionState = 'closed',
+  sessionId = null,
+  expectedClosing = 0,
+  onSessionUpdated
 }: {
   isOpen: boolean
   onClose: () => void
   sessionState?: 'open' | 'closed'
+  sessionId?: number | null
+  expectedClosing?: number
+  onSessionUpdated?: () => void
 }) {
   // Setup state for denominations counting
   const [counts, setCounts] = useState<Record<number, number>>({
     500: 0, 200: 0, 100: 0, 50: 0, 20: 0, 10: 0
   })
+  const [isProcessing, setIsProcessing] = useState(false)
 
   if (!isOpen) return null
 
   // Calculations
   const calculatedTotal = Object.entries(counts).reduce((acc, [val, count]) => acc + (parseFloat(val) * count), 0)
-  const expectedClosing = 12400 // Mock backend expected amount if closing
   const variance = calculatedTotal - expectedClosing
 
-  const handleOpenShift = () => {
-    // In real app, submit opening cash to Odoo backend
-    onClose()
+  const handleOpenShift = async () => {
+    setIsProcessing(true)
+    try {
+      await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'open', opening_balance: calculatedTotal, user_id: 1 })
+      })
+      if (onSessionUpdated) onSessionUpdated()
+      onClose()
+    } catch (e) {
+      console.error('Failed to open session', e)
+    } finally {
+      setIsProcessing(false)
+    }
   }
 
-  const handleCloseShift = () => {
-    // In real app, submit closing totals and variance to Odoo backend
-    onClose()
+  const handleCloseShift = async () => {
+    if (!sessionId) return
+    setIsProcessing(true)
+    try {
+      await fetch('/api/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'close', session_id: sessionId })
+      })
+      if (onSessionUpdated) onSessionUpdated()
+      onClose()
+    } catch (e) {
+      console.error('Failed to close session', e)
+    } finally {
+      setIsProcessing(false)
+    }
   }
 
   return (
@@ -68,11 +99,13 @@ export default function SessionManagerModal({
                 {sessionState === 'closed' ? 'Open Cash Drawer & Session' : 'Balance Till & Close Session'}
               </h2>
               <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
-                Terminal: POS-Main-1  ·  Cashier: Riya Sharma
+                Terminal: POS-Main-1  ·  Cashier: User 1
               </div>
             </div>
           </div>
-          <button onClick={onClose} className="btn-icon" style={{ border: 'none' }}><X size={20} /></button>
+          {sessionState === 'open' && (
+             <button onClick={onClose} className="btn-icon" style={{ border: 'none' }}><X size={20} /></button>
+          )}
         </div>
 
         <div style={{ padding: 32, display: 'grid', gridTemplateColumns: '1fr 340px', gap: 32, overflowY: 'auto' }}>
@@ -84,21 +117,10 @@ export default function SessionManagerModal({
             {sessionState === 'open' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 24 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 16, background: 'var(--bg-canvas)', borderRadius: 12 }}>
-                  <Clock size={16} color="var(--text-muted)" />
-                  <div>
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Session Started</div>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>Apr 4, 2026 - 09:00 AM</div>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 16, background: 'var(--bg-canvas)', borderRadius: 12 }}>
                   <IndianRupee size={16} color="var(--text-muted)" />
                   <div style={{ width: '100%' }}>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Expected Cash in Drawer</div>
                     <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--text-primary)' }}>₹{expectedClosing.toLocaleString()}</div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-secondary)', marginTop: 8, borderTop: '1px solid var(--border-light)', paddingTop: 8 }}>
-                      <span>Opening Cash: ₹2,000</span>
-                      <span>Cash Sales: ₹10,400</span>
-                    </div>
                   </div>
                 </div>
               </div>
@@ -121,7 +143,7 @@ export default function SessionManagerModal({
                 ₹{calculatedTotal.toLocaleString()}
               </div>
 
-              {sessionState === 'open' && calculatedTotal > 0 && (
+              {sessionState === 'open' && (
                 <div style={{ 
                   marginTop: 12, padding: '6px 12px', borderRadius: 8, fontSize: 13, fontWeight: 700, display: 'inline-block',
                   background: variance === 0 ? 'var(--accent-green-light)' : 'var(--accent-red-light)',
@@ -152,7 +174,7 @@ export default function SessionManagerModal({
                     <div style={{ padding: '6px 12px', background: 'var(--bg-canvas)', borderRight: '1px solid var(--border-default)', fontSize: 12, color: 'var(--text-muted)' }}>Qty</div>
                     <input 
                       type="number" min={0} 
-                      value={counts[d.val] || ''} 
+                      value={counts[d.val] === 0 ? '' : counts[d.val]} 
                       onChange={e => setCounts({...counts, [d.val]: parseInt(e.target.value) || 0})}
                       style={{ width: '100%', padding: '6px 10px', fontSize: 14, fontWeight: 600, border: 'none', outline: 'none' }} 
                       placeholder="0"
@@ -169,22 +191,24 @@ export default function SessionManagerModal({
         </div>
 
         <div style={{ padding: '20px 32px', borderTop: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--bg-canvas)' }}>
-          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          {sessionState === 'open' ? (
+             <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          ) : <div />}
           
           {sessionState === 'closed' ? (
-             <button className="btn btn-primary" style={{ padding: '12px 24px', fontSize: 15 }} onClick={handleOpenShift}>
-               Start Shift & Open Session
+             <button className="btn btn-primary" style={{ padding: '12px 24px', fontSize: 15 }} onClick={handleOpenShift} disabled={isProcessing}>
+               {isProcessing ? 'Processing...' : 'Start Shift & Open Session'}
              </button>
           ) : (
             <button 
                className="btn btn-primary" 
                style={{ 
                  padding: '12px 24px', fontSize: 15, 
-                 background: variance !== 0 ? 'var(--accent-red)' : 'var(--btn-primary-bg)' 
+                 background: variance < 0 ? 'var(--accent-red)' : 'var(--btn-primary-bg)' 
                }} 
-               onClick={handleCloseShift}
+               onClick={handleCloseShift} disabled={isProcessing}
             >
-              Post Variance & Close Session
+              {isProcessing ? 'Processing...' : 'Post Variance & Close Session'}
             </button>
           )}
         </div>
@@ -192,3 +216,4 @@ export default function SessionManagerModal({
     </div>
   )
 }
+

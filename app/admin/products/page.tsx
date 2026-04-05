@@ -1,9 +1,7 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Search, Plus, Star, X, Trash2 } from 'lucide-react'
-import { menuItems, menuCategories as initialCategories } from '@/lib/mockData'
 import ItemDetailsPanel from '@/components/ItemDetailsPanel'
-import { useLocalStorageState } from '@/hooks/useLocalStorageState'
 
 const stockStyle: Record<string, string> = {
   available: 'badge-green',
@@ -12,7 +10,7 @@ const stockStyle: Record<string, string> = {
 }
 
 export default function ItemsPage() {
-  const [categories, setCategories] = useLocalStorageState('admin_categories', initialCategories)
+  const [categories, setCategories] = useState<string[]>(['All'])
   const [activeCategory, setActiveCategory] = useState('All')
   const [search, setSearch] = useState('')
   
@@ -22,7 +20,33 @@ export default function ItemsPage() {
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState('')
 
-  const [productsList, setProductsList] = useLocalStorageState<any[]>('admin_products', menuItems)
+  const [productsList, setProductsList] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const fetchData = async () => {
+    try {
+      const [prodRes, catRes] = await Promise.all([
+        fetch('/api/products'),
+        fetch('/api/categories')
+      ])
+      if (prodRes.ok) {
+        const prods = await prodRes.json()
+        setProductsList(prods)
+      }
+      if (catRes.ok) {
+        const cats = await catRes.json()
+        setCategories(['All', ...cats.map((c: any) => c.name)])
+      }
+    } catch (e) {
+      console.error('Failed to load data', e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchData()
+  }, [])
 
   const handleOpenNew = () => {
     setSelectedItem(null)
@@ -38,12 +62,20 @@ export default function ItemsPage() {
     setIsPanelOpen(true)
   }
 
-  const handleSaveProduct = (product: any) => {
-    if (selectedItem) {
-      setProductsList(prev => prev.map(p => p.id === product.id ? product : p))
-    } else {
-      const newProduct = { ...product, id: Math.max(0, ...productsList.map(p=>p.id)) + 1, sold: 0, rating: 0 }
-      setProductsList([newProduct, ...productsList])
+  const handleSaveProduct = async (product: any) => {
+    const isEdit = !!product.id
+    try {
+      const res = await fetch('/api/products', {
+        method: isEdit ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(product)
+      })
+      if (res.ok) {
+        await fetchData()
+        setIsPanelOpen(false)
+      }
+    } catch (e) {
+      console.error('Save failed', e)
     }
   }
 
@@ -65,6 +97,8 @@ export default function ItemsPage() {
     const matchSearch = item.name.toLowerCase().includes(search.toLowerCase())
     return matchCat && matchSearch
   })
+
+  if (loading) return <div style={{ padding: 24 }}>Loading products...</div>
 
   return (
     <div className="animate-fade-in" style={{ position: 'relative' }}>
@@ -172,19 +206,19 @@ export default function ItemsPage() {
                   {item.name}
                 </td>
                 <td>
-                  <span className="badge badge-gray">{item.category}</span>
+                  <span className="badge badge-gray">{item.category || 'Uncategorized'}</span>
                 </td>
                 <td style={{ fontWeight: 700 }}>₹{item.price}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{item.tax}%</td>
-                <td style={{ fontWeight: 500 }}>{item.sold}</td>
+                <td style={{ fontWeight: 500 }}>{item.sold || 0}</td>
                 <td>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <Star size={12} fill="#f5a623" color="#f5a623" />
-                    <span style={{ fontWeight: 600 }}>{item.rating}</span>
+                    <span style={{ fontWeight: 600 }}>{item.rating || 0}</span>
                   </span>
                 </td>
                 <td>
-                  <span className={`badge ${stockStyle[item.stock]}`}>{item.stock}</span>
+                  <span className={`badge ${stockStyle[item.stock || 'available'] || 'badge-gray'}`}>{item.stock || 'available'}</span>
                 </td>
               </tr>
             ))}

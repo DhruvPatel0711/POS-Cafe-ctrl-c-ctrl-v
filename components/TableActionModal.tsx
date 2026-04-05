@@ -1,12 +1,10 @@
-'use client'
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   X, Users, Clock, ShoppingBag, Plus, Minus, CreditCard,
   CheckCircle2, Calendar, ChefHat, Trash2, Search,
-  Smartphone, Banknote, LayoutGrid, AlertCircle
+  Smartphone, Banknote, LayoutGrid, AlertCircle, Star, Loader2, QrCode
 } from 'lucide-react'
-import { menuItems, menuCategories } from '@/lib/mockData'
-
+import { QRCodeCanvas } from 'qrcode.react'
 // ─── Types ────────────────────────────────────────────────────────
 export type CartItem = {
   id: string
@@ -15,6 +13,7 @@ export type CartItem = {
   price: number
   qty: number
   taxRate: number
+  variant?: string
 }
 
 export type TableOrder = {
@@ -22,6 +21,7 @@ export type TableOrder = {
   items: CartItem[]
   status: 'active' | 'kitchen' | 'paid'
   startedAt: string
+  dbOrderId?: number
 }
 
 export type ReservationInfo = {
@@ -95,6 +95,65 @@ export default function TableActionModal({
   const [cashGiven, setCashGiven] = useState('')
   const [payDone, setPayDone] = useState(false)
 
+  // Stripe
+  const [stripeSession, setStripeSession] = useState<{ sessionId: string, paymentUrl: string } | null>(null)
+  const [paymentStep, setPaymentStep] = useState<'select' | 'processing' | 'qr' | 'success'>('select')
+  const [stripeError, setStripeError] = useState<string | null>(null)
+  const [pollCount, setPollCount] = useState(0)
+  const pollRef = useRef<NodeJS.Timeout | null>(null)
+  const [qrPulse, setQrPulse] = useState(false)
+
+  // Feedback
+  const [feedbackRating, setFeedbackRating] = useState<number>(0)
+  const [feedbackComment, setFeedbackComment] = useState('')
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
+
+  // DB Products
+  const [menuItems, setMenuItems] = useState<any[]>([])
+  const [menuCategories, setMenuCategories] = useState<string[]>(['All'])
+
+  useEffect(() => {
+    if (activeTab === 'order' && menuItems.length === 0) {
+      fetch('/api/products').then(r => r.json()).then(setMenuItems).catch(console.error)
+      fetch('/api/categories').then(r => r.json()).then(c => setMenuCategories(['All', ...c.map((cat: any) => cat.name)])).catch(console.error)
+    }
+  }, [activeTab, menuItems.length])
+
+  // Cleanup polling
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  }, [])
+
+  // QR pulse
+  useEffect(() => {
+    if (paymentStep === 'qr') {
+      const t = setInterval(() => setQrPulse(p => !p), 1500)
+      return () => clearInterval(t)
+    }
+  }, [paymentStep])
+
+  const startPolling = useCallback((sessionId: string) => {
+    if (pollRef.current) clearInterval(pollRef.current)
+    pollRef.current = setInterval(async () => {
+      try {
+        setPollCount(c => c + 1)
+        const res = await fetch(`/api/stripe/check-status?sessionId=${sessionId}`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (data.status === 'paid') {
+          clearInterval(pollRef.current!)
+          pollRef.current = null
+          setPaymentStep('success')
+          setTimeout(() => setPayDone(true), 1500)
+        }
+      } catch (err) {
+        console.error('Polling error:', err)
+      }
+    }, 3000)
+  }, [])
+
   if (!table) return null
 
   const isAvailable   = table.status === 'available'
@@ -102,14 +161,13 @@ export default function TableActionModal({
   const isReserved    = table.status === 'reserved'
   const isMaintenance = table.status === 'maintenance'
 
-  // ── Cart helpers ─────────────────────────────────────────────
   const filteredItems = menuItems.filter(item => {
     const matchCat = activeCategory === 'All' || item.category === activeCategory
     const matchSearch = item.name.toLowerCase().includes(itemSearch.toLowerCase())
     return matchCat && matchSearch && item.stock !== 'out'
   })
 
-  const addItem = (item: typeof menuItems[0]) => {
+  const addItem = (item: any) => {
     const existing = cart.find(c => c.itemId === item.id)
     if (existing) {
       setCart(cart.map(c => c.id === existing.id ? { ...c, qty: c.qty + 1 } : c))
@@ -166,13 +224,67 @@ export default function TableActionModal({
     onClose()
   }
 
-  const handlePayment = () => {
-    if (payMethod === 'cash' && cashGivenNum < orderTotal) return
-    setPayDone(true)
-    setTimeout(() => {
-      onCheckout(table.id)
-      onClose()
-    }, 1800)
+  const cancelSession = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+    setStripeSession(null)
+    setPaymentStep('select')
+    setStripeError(null)
+    setPollCount(0)
+  }
+
+  const completeCheckoutAndClose = () => {
+    onCheckout(table.id)
+    onClose()
+  }
+
+  const submitFeedback = async () => {
+    if (feedbackRating > 0 && tableOrder?.orderId) {
+      setIsSubmittingFeedback(true)
+      try {
+        let numericOrderId = parseInt(tableOrder.orderId.replace(/[^0-9]/g, ''), 10)
+        if (isNaN(numericOrderId)) numericOrderId = table.id // fallback just for mock
+        await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ orderId: numericOrderId, rating: feedbackRating, comment: feedbackComment })
+        })
+      } catch(e) {
+        console.error('Feedback error', e)
+      }
+    }
+    completeCheckoutAndClose()
+  }
+
+  const handlePayment = async () => {
+    if (payMethod === 'cash') {
+      if (cashGivenNum < orderTotal) return
+      setPaymentStep('success')
+      setTimeout(() => setPayDone(true), 1500)
+    } else {
+      // Stripe flow
+      setPaymentStep('processing')
+      setStripeError(null)
+      try {
+        const res = await fetch('/api/stripe/create-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ amount: orderTotal, method: { name: payMethod }, orderId: tableOrder?.orderId || table.order || 'FLOOR-ORDER' }),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Failed to create session')
+        setStripeSession({ sessionId: data.sessionId, paymentUrl: data.paymentUrl })
+        setPaymentStep('qr')
+        setPollCount(0)
+        startPolling(data.sessionId)
+      } catch (err: any) {
+        console.error('Stripe session error:', err)
+        setStripeError(err.message)
+        setPaymentStep('select')
+      }
+    }
   }
 
   // ── Tab bar config ────────────────────────────────────────────
@@ -704,18 +816,74 @@ export default function TableActionModal({
           {activeTab === 'payment' && (
             <div style={{ padding: 24 }}>
               {payDone ? (
-                <div style={{ textAlign: 'center', padding: '40px 0' }}>
-                  <div style={{
-                    width: 80, height: 80, borderRadius: '50%',
-                    background: 'var(--accent-green)', color: 'white',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    margin: '0 auto 20px',
-                  }}>
+                <div style={{ textAlign: 'center', background: 'white', padding: '40px 60px', borderRadius: 24, boxShadow: 'var(--shadow-lg)' }}>
+                  <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'var(--accent-green)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', animation: 'scaleIn 0.4s ease' }}>
                     <CheckCircle2 size={40} />
                   </div>
-                  <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 8 }}>Payment Successful!</div>
-                  <div style={{ fontSize: 14, color: 'var(--text-muted)' }}>
-                    ₹{orderTotal.toFixed(0)} collected. Table will be marked as available.
+                  <div style={{ fontSize: 28, fontWeight: 800, marginBottom: 8 }}>Payment Successful!</div>
+                  <div style={{ fontSize: 16, color: 'var(--accent-green)', fontWeight: 600 }}>Thank you for your order</div>
+                  
+                  {/* Feedback UI */}
+                  <div style={{ marginTop: 32, paddingTop: 32, borderTop: '1px solid var(--border-light)', animation: 'fadeIn 0.5s ease' }}>
+                    <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 16, color: 'var(--text-primary)' }}>Rate Your Experience</h3>
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 24 }}>
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <button key={star} onClick={() => setFeedbackRating(star)} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: 8, transition: 'transform 0.1s ease' }} onMouseDown={e => e.currentTarget.style.transform = 'scale(0.9)'} onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}>
+                          <Star size={40} fill={feedbackRating >= star ? 'var(--accent-orange)' : 'transparent'} color={feedbackRating >= star ? 'var(--accent-orange)' : 'var(--text-muted)'} strokeWidth={1.5} />
+                        </button>
+                      ))}
+                    </div>
+                    
+                    {feedbackRating > 0 && (
+                      <div style={{ animation: 'fadeIn 0.3s ease' }}>
+                        <textarea
+                          placeholder="Tell us what you liked (optional)..."
+                          value={feedbackComment}
+                          onChange={(e) => setFeedbackComment(e.target.value)}
+                          style={{ width: '100%', height: 100, padding: 16, borderRadius: 12, border: '1px solid var(--border-default)', fontSize: 15, marginBottom: 24, resize: 'none', outline: 'none' }}
+                        />
+                      </div>
+                    )}
+                    
+                    <div style={{ display: 'flex', gap: 12 }}>
+                      <button className="btn btn-secondary" style={{ flex: 1, padding: '16px', fontSize: 15 }} onClick={completeCheckoutAndClose}>
+                        {feedbackRating > 0 ? 'Not Now' : 'Skip'}
+                      </button>
+                      <button 
+                        className="btn btn-primary" 
+                        style={{ flex: 2, padding: '16px', fontSize: 15, opacity: feedbackRating === 0 ? 0.5 : 1 }} 
+                        disabled={feedbackRating === 0 || isSubmittingFeedback} 
+                        onClick={submitFeedback}
+                      >
+                        {isSubmittingFeedback ? 'Submitting...' : 'Submit Feedback'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : paymentStep === 'success' ? (
+                <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                  <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'var(--accent-green)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px', animation: 'scaleIn 0.4s ease' }}>
+                    <CheckCircle2 size={40} />
+                  </div>
+                  <div style={{ fontSize: 28, fontWeight: 800, marginBottom: 8 }}>Payment Successful!</div>
+                </div>
+              ) : paymentStep === 'processing' ? (
+                <div style={{ padding: '60px 20px', textAlign: 'center' }}>
+                  <Loader2 size={40} className="spinner" style={{ margin: '0 auto 20px', color: 'var(--accent-blue)' }} />
+                  <h3 style={{ fontSize: 20 }}>Generating Secure Payment Link...</h3>
+                </div>
+              ) : paymentStep === 'qr' && stripeSession ? (
+                <div style={{ textAlign: 'center', maxWidth: 400, margin: '0 auto' }}>
+                  <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+                    <div style={{ padding: 24, background: 'white', borderRadius: 24, boxShadow: 'var(--shadow-lg)', border: `2px solid ${qrPulse ? 'var(--accent-blue)' : 'transparent'}`, transition: 'border-color 1s ease' }}>
+                      <QRCodeCanvas value={stripeSession.paymentUrl} size={200} />
+                    </div>
+                  </div>
+                  <h2 style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}>Scan to Pay ₹{orderTotal.toFixed(0)}</h2>
+                  <p style={{ color: 'var(--text-muted)', marginBottom: 24, fontSize: 15 }}>Waiting for Stripe payment confirmation...</p>
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginTop: 24 }}>
+                    <button className="btn btn-secondary" onClick={cancelSession}>Cancel Session</button>
+                    <a href={stripeSession.paymentUrl} target="_blank" className="btn btn-primary" rel="noreferrer">Open Link</a>
                   </div>
                 </div>
               ) : (
@@ -788,20 +956,7 @@ export default function TableActionModal({
                     </div>
                   )}
 
-                  {payMethod === 'upi' && (
-                    <div style={{ background: 'var(--accent-blue-light)', padding: 14, borderRadius: 10, marginBottom: 16, textAlign: 'center' }}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-blue)', marginBottom: 8 }}>
-                        📱 Direct customer to scan UPI QR at the counter terminal
-                      </div>
-                      <div style={{
-                        background: 'white', padding: 12, borderRadius: 8, display: 'inline-block',
-                        border: '2px solid var(--accent-blue)', fontSize: 22, fontWeight: 800,
-                        letterSpacing: 1, color: 'var(--accent-blue)',
-                      }}>
-                        ₹{orderTotal.toFixed(0)}
-                      </div>
-                    </div>
-                  )}
+
 
                   <button
                     onClick={handlePayment}

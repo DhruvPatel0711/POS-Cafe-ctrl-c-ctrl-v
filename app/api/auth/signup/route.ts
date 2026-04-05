@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/app/lib/prisma";
+import { query } from "@/lib/db";
 import bcrypt from "bcrypt";
-import { signToken } from "@/app/lib/auth";
+import { signToken } from "@/lib/auth-server";
+import { User, Role } from "@/app/lib/db-types";
 
 export async function POST(req: NextRequest) {
   try {
@@ -16,11 +17,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Check if user already exists
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
+    const existingResult = await query<User>(
+      'SELECT * FROM "User" WHERE email = $1',
+      [email]
+    );
 
-    if (existingUser) {
+    if (existingResult.rows.length > 0) {
       return NextResponse.json(
         { error: "User with this email already exists" },
         { status: 400 }
@@ -31,14 +33,11 @@ export async function POST(req: NextRequest) {
     const passwordHash = await bcrypt.hash(password, 10);
 
     // Create user
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        passwordHash,
-        role: "CASHIER", // Default role
-      },
-    });
+    const insertResult = await query<User>(
+      'INSERT INTO "User" (name, email, "passwordHash", role) VALUES ($1, $2, $3, $4) RETURNING *',
+      [name, email, passwordHash, Role.CASHIER]
+    );
+    const user = insertResult.rows[0];
 
     // Generate JWT token
     const token = await signToken({

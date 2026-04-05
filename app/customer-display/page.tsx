@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { QrCode, CheckCircle2, Coffee, Clock } from 'lucide-react'
+import { QRCodeCanvas } from 'qrcode.react'
 
 type CustomerOrderLine = {
   id: string
@@ -9,14 +10,8 @@ type CustomerOrderLine = {
   price: number
 }
 
-// Simulating live data from the cashier's POS terminal
-const initialCart: CustomerOrderLine[] = [
-  { id: '1', name: 'Filter Coffee (Regular)', qty: 2, price: 60 },
-  { id: '2', name: 'Masala Dosa', qty: 1, price: 120 },
-]
-
 export default function CustomerDisplayPage() {
-  const [cart, setCart] = useState<CustomerOrderLine[]>(initialCart)
+  const [cart, setCart] = useState<CustomerOrderLine[]>([])
   const [paymentStatus, setPaymentStatus] = useState<'shopping' | 'paying' | 'success'>('shopping')
   const [currentTime, setCurrentTime] = useState('')
 
@@ -29,20 +24,45 @@ export default function CustomerDisplayPage() {
     return () => clearInterval(timer)
   }, [])
 
+  // Sync with POS terminal actively using localStorage
+  useEffect(() => {
+    const syncState = () => {
+      try {
+        const storedCart = localStorage.getItem('pos_active_cart')
+        const storedState = localStorage.getItem('pos_active_order_state') // 'Draft', 'Checkout', 'Paid'
+
+        if (storedCart) {
+          const parsed = JSON.parse(storedCart)
+          if (Array.isArray(parsed)) setCart(parsed)
+        }
+
+        if (storedState) {
+          const stateStr = JSON.parse(storedState)
+          if (stateStr === 'Paid') setPaymentStatus('success')
+          else if (stateStr === 'Checkout') setPaymentStatus('paying')
+          else setPaymentStatus('shopping')
+        } else {
+          setPaymentStatus('shopping')
+        }
+      } catch (e) {
+        console.error('Customer Sync Error', e)
+      }
+    }
+
+    syncState()
+    window.addEventListener('storage', syncState)
+    // Polling as a fallback to catch rapid updates within the same window instance
+    const poll = setInterval(syncState, 500)
+
+    return () => {
+      window.removeEventListener('storage', syncState)
+      clearInterval(poll)
+    }
+  }, [])
+
   const subtotal = cart.reduce((acc, c) => acc + (c.price * c.qty), 0)
   const tax = subtotal * 0.05
   const grandTotal = subtotal + tax
-
-  // Simulation: Move to paying after 5 seconds, then success after 10
-  useEffect(() => {
-    const timer1 = setTimeout(() => setPaymentStatus('paying'), 5000)
-    const timer2 = setTimeout(() => setPaymentStatus('success'), 12000)
-    
-    return () => {
-      clearTimeout(timer1)
-      clearTimeout(timer2)
-    }
-  }, [])
 
   return (
     <div style={{ backgroundColor: '#000', color: '#fff', height: '100vh', width: '100vw', display: 'flex', fontFamily: 'var(--font-sans)', margin: '-28px -32px' }}>
@@ -50,7 +70,7 @@ export default function CustomerDisplayPage() {
       {/* Promo / Branding Side (Left 60%) */}
       <div style={{ flex: 1.5, position: 'relative', display: 'flex', flexDirection: 'column', backgroundColor: '#1a1a1a', overflow: 'hidden' }}>
         
-        {/* Background Graphic Simulation */}
+        {/* Background Graphic Simulated */}
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.2, backgroundImage: 'url("https://images.unsplash.com/photo-1497935586351-b67a49e012bf?auto=format&fit=crop&q=80")', backgroundSize: 'cover', backgroundPosition: 'center' }} />
         
         <div style={{ position: 'relative', zIndex: 10, padding: '40px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -58,7 +78,7 @@ export default function CustomerDisplayPage() {
               <div style={{ background: 'var(--accent-blue)', color: 'white', padding: 12, borderRadius: 12 }}><Coffee size={24}/></div>
               <div>
                  <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0 }}>Cafe POS</h1>
-                 <p style={{ fontSize: 13, color: '#aaa', margin: 0, letterSpacing: '2px', textTransform: 'uppercase' }}>Odoo Powered Cafe</p>
+                 <p style={{ fontSize: 13, color: '#aaa', margin: 0, letterSpacing: '2px', textTransform: 'uppercase' }}>Odoo Powered</p>
               </div>
            </div>
            
@@ -70,17 +90,26 @@ export default function CustomerDisplayPage() {
         <div style={{ flex: 1, position: 'relative', zIndex: 10, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '60px' }}>
           {paymentStatus === 'shopping' && (
              <div className="animate-slide-up">
-               <span style={{ background: 'var(--accent-blue)', color: 'white', padding: '6px 12px', borderRadius: 8, fontSize: 14, fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 16, display: 'inline-block' }}>Special Offer</span>
-               <h2 style={{ fontSize: 56, fontWeight: 800, lineHeight: 1.1, marginBottom: 24 }}>Add a pastry for just ₹40.</h2>
-               <p style={{ fontSize: 24, color: '#aaa' }}>Ask your cashier to upgrade your cart.</p>
+               {cart.length === 0 ? (
+                 <>
+                   <h2 style={{ fontSize: 56, fontWeight: 800, lineHeight: 1.1, marginBottom: 24 }}>Welcome!</h2>
+                   <p style={{ fontSize: 24, color: '#aaa' }}>Please step up to place your order.</p>
+                 </>
+               ) : (
+                 <>
+                   <span style={{ background: 'var(--accent-blue)', color: 'white', padding: '6px 12px', borderRadius: 8, fontSize: 14, fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: 16, display: 'inline-block' }}>Special Offer</span>
+                   <h2 style={{ fontSize: 56, fontWeight: 800, lineHeight: 1.1, marginBottom: 24 }}>Add a pastry for just ₹40.</h2>
+                   <p style={{ fontSize: 24, color: '#aaa' }}>Ask your cashier to upgrade your cart.</p>
+                 </>
+               )}
              </div>
           )}
 
           {paymentStatus === 'paying' && (
              <div className="animate-slide-up" style={{ display: 'flex', alignItems: 'flex-start', gap: 40 }}>
                 <div style={{ background: 'white', padding: 16, borderRadius: 24 }}>
-                   <div style={{ border: '4px solid #f0f0f0', borderRadius: 16, padding: 8 }}>
-                      <QrCode size={180} strokeWidth={1.5} color="#000" />
+                   <div style={{ border: '4px solid #f0f0f0', borderRadius: 16, padding: 8, background: 'white' }}>
+                      <QRCodeCanvas value={`upi://pay?pa=merchant@upi&pn=CafeOdoo&am=${grandTotal.toFixed(0)}&cu=INR`} size={180} />
                    </div>
                 </div>
                 <div>
@@ -97,7 +126,7 @@ export default function CustomerDisplayPage() {
                   <CheckCircle2 size={80} color="white" />
                 </div>
                 <h2 style={{ fontSize: 56, fontWeight: 800, lineHeight: 1.1, marginBottom: 16 }}>Payment Successful!</h2>
-                <p style={{ fontSize: 24, color: '#aaa' }}>Thank you for visiting us. Your order #1090 is confirmed.</p>
+                <p style={{ fontSize: 24, color: '#aaa' }}>Thank you for visiting us. Your order is confirmed.</p>
              </div>
           )}
         </div>
@@ -111,15 +140,19 @@ export default function CustomerDisplayPage() {
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '32px' }}>
-          {cart.map(item => (
-            <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, fontSize: 18 }}>
-               <div style={{ display: 'flex', gap: 16 }}>
-                 <span style={{ color: '#aaa' }}>{item.qty}</span>
-                 <span style={{ fontWeight: 600 }}>{item.name}</span>
-               </div>
-               <span style={{ fontWeight: 700 }}>₹{item.price * item.qty}</span>
-            </div>
-          ))}
+          {cart.length === 0 ? (
+            <div style={{ color: '#555', textAlign: 'center', marginTop: 100, fontSize: 18 }}>Waiting for items...</div>
+          ) : (
+            cart.map(item => (
+              <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, fontSize: 18 }}>
+                 <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                   <span style={{ color: '#aaa', background: '#333', padding: '4px 10px', borderRadius: 8, fontSize: 14 }}>{item.qty}</span>
+                   <span style={{ fontWeight: 600 }}>{item.name}</span>
+                 </div>
+                 <span style={{ fontWeight: 700 }}>₹{item.price * item.qty}</span>
+              </div>
+            ))
+          )}
         </div>
 
         <div style={{ padding: '32px', backgroundColor: '#111', borderTop: '1px solid #333' }}>
@@ -143,3 +176,4 @@ export default function CustomerDisplayPage() {
     </div>
   )
 }
+

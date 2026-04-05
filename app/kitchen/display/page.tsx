@@ -1,6 +1,5 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { kitchenTickets } from '@/lib/mockData'
 import { Clock, Flame, AlertTriangle, RefreshCw, ChevronLeft, RotateCcw } from 'lucide-react'
 
 const priorityConfig: Record<string, { label: string; color: string; bg: string; icon: any }> = {
@@ -18,19 +17,6 @@ const statusConfig: Record<string, { label: string; bg: string; border: string; 
 const STATUS_ORDER = ['to_cook', 'preparing', 'completed'] as const
 type TicketStatus = typeof STATUS_ORDER[number]
 
-function cloneTickets() {
-  return kitchenTickets.map(t => ({
-    ...t, status: t.status as string,
-    items: t.items.map(i => ({ ...i })),
-    elapsedSeconds: parseElapsed(t.elapsed),
-  }))
-}
-
-function parseElapsed(elapsed: string): number {
-  const [mm, ss] = elapsed.split(':').map(Number)
-  return (mm || 0) * 60 + (ss || 0)
-}
-
 function formatElapsed(sec: number): string {
   const m = Math.floor(sec / 60)
   const s = sec % 60
@@ -38,91 +24,114 @@ function formatElapsed(sec: number): string {
 }
 
 export default function KitchenDisplayPage() {
-  const [tickets, setTickets] = useState(cloneTickets)
+  const [tickets, setTickets] = useState<any[]>([])
   const [kitchenFilter, setKitchenFilter] = useState('All Kitchens')
-  const [lastReset, setLastReset] = useState<Date>(new Date())
-  const [isLoaded, setIsLoaded] = useState(false)
+  const [lastReset, setLastReset] = useState<Date | null>(null)
 
   useEffect(() => {
-    const saved = localStorage.getItem('kitchen_tickets_state')
-    if (saved) { try { setTickets(JSON.parse(saved)) } catch (err) {} }
-    const savedDate = localStorage.getItem('kitchen_last_reset')
-    if (savedDate) setLastReset(new Date(savedDate))
-    setIsLoaded(true)
+    setLastReset(new Date())
   }, [])
 
-  useEffect(() => {
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'kitchen_tickets_state' && e.newValue) {
-        try { setTickets(JSON.parse(e.newValue)) } catch(err) {}
+  const fetchTickets = async () => {
+    try {
+      const res = await fetch('/api/kitchen/tickets')
+      if (res.ok) {
+        const data = await res.json()
+        setTickets(prev => data.map((newT: any) => {
+          const oldT = prev.find((t: any) => t.id === newT.id)
+          // To prevent frontend timers from jumping backward when polling completes,
+          // we keep the locally incremented elapsed_seconds if the ticket is still active.
+          if (oldT && newT.status !== 'completed' && newT.status !== 'served') {
+            return { ...newT, elapsed_seconds: oldT.elapsed_seconds }
+          }
+          return newT
+        }))
       }
+    } catch (e) {
+      console.error('Failed to fetch kitchen tickets', e)
     }
-    window.addEventListener('storage', handleStorage)
-    return () => window.removeEventListener('storage', handleStorage)
+  }
+
+  // Poll every 3 seconds
+  useEffect(() => {
+    fetchTickets()
+    const int = setInterval(fetchTickets, 3000)
+    return () => clearInterval(int)
   }, [])
 
+  // Local clock tick for smooth counter
   useEffect(() => {
-    if (isLoaded) {
-      localStorage.setItem('kitchen_tickets_state', JSON.stringify(tickets))
-      localStorage.setItem('kitchen_last_reset', lastReset.toISOString())
-    }
-  }, [tickets, lastReset, isLoaded])
-
-  useEffect(() => {
-    if (!isLoaded) return
-    const interval = setInterval(() => {
-      setTickets(prev => prev.map(t => t.status !== 'completed' ? { ...t, elapsedSeconds: t.elapsedSeconds + 1 } : t))
+    const int = setInterval(() => {
+      setTickets(prev => prev.map(t => {
+        if (t.status === 'completed' || t.status === 'served') return t
+        return { ...t, elapsed_seconds: (t.elapsed_seconds || 0) + 1 }
+      }))
     }, 1000)
-    return () => clearInterval(interval)
-  }, [isLoaded])
+    return () => clearInterval(int)
+  }, [])
 
-  const advance = (id: string) => {
+  const advance = async (id: number) => {
+    // Optimistic
     setTickets(prev => prev.map(t => {
       if (t.id !== id) return t
       const idx = STATUS_ORDER.indexOf(t.status as TicketStatus)
       if (idx === STATUS_ORDER.length - 1) return { ...t, status: 'served' }
       return { ...t, status: STATUS_ORDER[idx + 1] }
     }).filter(t => t.status !== 'served'))
+    
+    await fetch(`/api/kitchen/tickets/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'advance' })
+    })
+    fetchTickets()
   }
 
-  const goBack = (id: string) => {
+  const goBack = async (id: number) => {
     setTickets(prev => prev.map(t => {
       if (t.id !== id) return t
       const idx = STATUS_ORDER.indexOf(t.status as TicketStatus)
       if (idx <= 0) return t
       return { ...t, status: STATUS_ORDER[idx - 1] }
     }))
+
+    await fetch(`/api/kitchen/tickets/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'go_back' })
+    })
+    fetchTickets()
   }
 
-  const resetTicket = (id: string) => {
-    const original = kitchenTickets.find(t => t.id === id)
-    if (!original) return
-    setTickets(prev => prev.map(t =>
-      t.id !== id ? t : { ...t, status: original.status, items: original.items.map(i => ({ ...i })), elapsedSeconds: parseElapsed(original.elapsed) }
-    ))
-  }
-
-  const toggleItem = (ticketId: string, itemIdx: number) => {
+  const toggleItem = async (ticketId: number, itemIdx: number) => {
     setTickets(prev => prev.map(t => {
       if (t.id !== ticketId) return t
       const newItems = [...t.items]
       newItems[itemIdx] = { ...newItems[itemIdx], done: !newItems[itemIdx].done }
       return { ...t, items: newItems }
     }))
+
+    await fetch(`/api/kitchen/tickets/${ticketId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'toggle_item', item_index: itemIdx })
+    })
   }
 
-  const resetAll = () => { setTickets(cloneTickets()); setLastReset(new Date()) }
+  const resetAll = () => { 
+    fetchTickets()
+    setLastReset(new Date()) 
+  }
 
-  const displayTickets = tickets
   const colCounts: Record<string, number> = {
-    to_cook: displayTickets.filter(t => t.status === 'to_cook').length,
-    preparing: displayTickets.filter(t => t.status === 'preparing').length,
-    completed: displayTickets.filter(t => t.status === 'completed').length,
+    to_cook: tickets.filter(t => t.status === 'to_cook').length,
+    preparing: tickets.filter(t => t.status === 'preparing').length,
+    completed: tickets.filter(t => t.status === 'completed').length,
   }
 
-  const getEffectivePriority = (t: typeof tickets[0]) => {
-    if (t.status === 'to_cook' && t.elapsedSeconds > 600) return 'urgent'
-    return t.priority
+  const getEffectivePriority = (t: any) => {
+    if (t.status === 'to_cook' && (t.elapsed_seconds || 0) > 600) return 'urgent'
+    return t.priority || 'normal'
   }
 
   return (
@@ -131,7 +140,7 @@ export default function KitchenDisplayPage() {
         <div>
           <h1 className="page-title">Kitchen Display</h1>
           <div className="page-subtitle">
-            Live ticket board — last reset {lastReset.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            Live ticket board — last reset {lastReset ? lastReset.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
           </div>
         </div>
         <div className="header-actions">
@@ -141,8 +150,8 @@ export default function KitchenDisplayPage() {
             <option value="Main Kitchen">Main Kitchen</option>
             <option value="Beverage Station">Beverage Station</option>
           </select>
-          <button onClick={resetAll} className="btn btn-secondary btn-sm" id="reset-all-btn" title="Reset all tickets">
-            <RefreshCw size={13} /> Reset All
+          <button onClick={resetAll} className="btn btn-secondary btn-sm" id="reset-all-btn" title="Refresh">
+            <RefreshCw size={13} /> Refresh
           </button>
           <span className="badge badge-green" style={{ fontSize: 12 }}>● Live</span>
         </div>
@@ -150,7 +159,7 @@ export default function KitchenDisplayPage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
         {(Object.keys(statusConfig) as TicketStatus[]).map(col => {
-          const colTickets = displayTickets.filter(t => t.status === col)
+          const colTickets = tickets.filter(t => t.status === col)
           const cfg = statusConfig[col]
           return (
             <div key={col}>
@@ -161,11 +170,10 @@ export default function KitchenDisplayPage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {colTickets.map(ticket => {
                   const effPri = getEffectivePriority(ticket)
-                  const pri = priorityConfig[effPri]
+                  const pri = priorityConfig[effPri] || priorityConfig.normal
                   const PriIcon = pri.icon
                   const canGoBack = STATUS_ORDER.indexOf(ticket.status as TicketStatus) > 0
-                  const allDone = ticket.items.every(i => i.done)
-                  const isOverdue = ticket.elapsedSeconds > 900
+                  const isOverdue = (ticket.elapsed_seconds || 0) > 900
 
                   return (
                     <div key={ticket.id} id={`ticket-${ticket.id}`} style={{
@@ -182,7 +190,7 @@ export default function KitchenDisplayPage() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                           <div>
                             <div style={{ fontWeight: 800, fontSize: 15 }}>{ticket.table}</div>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{ticket.orderId} · {ticket.id}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{ticket.orderId}</div>
                           </div>
                           {canGoBack && (
                             <button onClick={() => goBack(ticket.id)} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 8px', borderRadius: 6, border: '1px solid var(--border-default)', background: 'white', cursor: 'pointer', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)' }} id={`back-ticket-${ticket.id}`}>
@@ -191,11 +199,11 @@ export default function KitchenDisplayPage() {
                           )}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13, fontWeight: 700, marginBottom: 10, color: isOverdue ? 'var(--accent-red)' : 'var(--text-secondary)' }}>
-                          <Clock size={13} /> {formatElapsed(ticket.elapsedSeconds)}
+                          <Clock size={13} /> {formatElapsed(ticket.elapsed_seconds || 0)}
                           {isOverdue && <span style={{ fontSize: 10, background: 'var(--accent-red-light)', color: 'var(--accent-red)', padding: '1px 6px', borderRadius: 10, fontWeight: 700 }}>OVERDUE</span>}
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 12 }}>
-                          {ticket.items.map((item, i) => (
+                          {ticket.items?.map((item: any, i: number) => (
                             <div key={i} onClick={() => toggleItem(ticket.id, i)} style={{ display: 'flex', alignItems: 'center', gap: 8, textDecoration: item.done ? 'line-through' : 'none', color: item.done ? 'var(--text-muted)' : 'var(--text-primary)', cursor: 'pointer', padding: '5px 6px', borderRadius: 6, userSelect: 'none' }}>
                               <div style={{ width: 18, height: 18, borderRadius: 4, flexShrink: 0, border: `1.5px solid ${item.done ? 'var(--accent-green)' : cfg.border}`, background: item.done ? 'var(--accent-green)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 {item.done && <span style={{ color: 'white', fontSize: 10, fontWeight: 700 }}>✓</span>}
@@ -205,12 +213,9 @@ export default function KitchenDisplayPage() {
                           ))}
                         </div>
                         <div style={{ height: 4, background: '#e5e5e5', borderRadius: 10, overflow: 'hidden', marginBottom: 12 }}>
-                          <div style={{ height: '100%', width: `${(ticket.items.filter(i => i.done).length / ticket.items.length) * 100}%`, background: cfg.border, borderRadius: 10, transition: 'width 0.4s ease' }} />
+                          <div style={{ height: '100%', width: `${((ticket.items?.filter((i:any) => i.done).length || 0) / Math.max(1, (ticket.items?.length || 1))) * 100}%`, background: cfg.border, borderRadius: 10, transition: 'width 0.4s ease' }} />
                         </div>
                         <div style={{ display: 'flex', gap: 8 }}>
-                          <button onClick={() => resetTicket(ticket.id)} title="Reset" style={{ padding: '7px 10px', border: '1px solid var(--border-default)', borderRadius: 7, background: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }} id={`reset-ticket-${ticket.id}`}>
-                            <RotateCcw size={13} />
-                          </button>
                           <button onClick={() => advance(ticket.id)} id={`advance-ticket-${ticket.id}`} style={{
                             flex: 1, padding: '8px 0',
                             background: ticket.status === 'completed' ? 'var(--accent-green)' : ticket.status === 'to_cook' ? '#e22134' : '#f5a623',

@@ -1,8 +1,6 @@
 'use client'
-import { useState } from 'react'
-import { floors as initialFloors } from '@/lib/mockData'
+import { useState, useEffect } from 'react'
 import { Plus, Users, Settings, Trash2, X } from 'lucide-react'
-import { useLocalStorageState } from '@/hooks/useLocalStorageState'
 
 const statusColors: Record<string, { badge: string }> = {
   available:   { badge: 'badge-green'  },
@@ -12,8 +10,9 @@ const statusColors: Record<string, { badge: string }> = {
 }
 
 export default function AdminFloorsPage() {
-  const [floors, setFloors] = useLocalStorageState('admin_floors', initialFloors)
-  const [activeFloorId, setActiveFloorId] = useState(floors[0]?.id || 1)
+  const [floors, setFloors] = useState<any[]>([])
+  const [activeFloorId, setActiveFloorId] = useState<number>(0)
+  const [loading, setLoading] = useState(true)
   
   const [floorModalOpen, setFloorModalOpen] = useState(false)
   const [newFloorName, setNewFloorName] = useState('')
@@ -21,53 +20,105 @@ export default function AdminFloorsPage() {
   const [tableModalOpen, setTableModalOpen] = useState(false)
   const [tableConfig, setTableConfig] = useState({ id: 0, name: '', capacity: 4 })
   const [isEditingTable, setIsEditingTable] = useState(false)
+  const [tableCount, setTableCount] = useState(1)
 
-  const activeFloor = floors.find(f => f.id === activeFloorId)
-
-  const handleDeleteFloor = (floorId: number) => {
-    if (window.confirm('Are you sure you want to completely delete this floor and all its tables?')) {
-      const remaining = floors.filter(f => f.id !== floorId)
-      setFloors(remaining)
-      if (remaining.length > 0) setActiveFloorId(remaining[0].id)
-      else setActiveFloorId(0)
+  const fetchData = async () => {
+    try {
+      const res = await fetch('/api/floors')
+      if (res.ok) {
+        const data = await res.json()
+        setFloors(data)
+        if (data.length > 0 && activeFloorId === 0) {
+          setActiveFloorId(data[0].id)
+        } else if (data.length === 0) {
+          setActiveFloorId(0)
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load floors', e)
+    } finally {
+      setLoading(false)
     }
   }
 
-  const [tableCount, setTableCount] = useState(1)
+  useEffect(() => {
+    fetchData()
+  }, [])
 
-  const handleAddFloor = () => {
-    if (!newFloorName.trim()) return
-    const newId = floors.length > 0 ? Math.max(...floors.map(f => f.id)) + 1 : 1
-    const newFloor = { id: newId, name: newFloorName.trim(), tables: [] }
-    setFloors([...floors, newFloor])
-    setActiveFloorId(newId)
-    setFloorModalOpen(false)
-    setNewFloorName('')
-  }
+  const activeFloor = floors.find(f => f.id === activeFloorId)
 
-  const handleSaveTable = () => {
-    if (!tableConfig.name.trim()) return
-    setFloors(prev => prev.map(f => {
-      if (f.id !== activeFloorId) return f
-      let updatedTables = [...f.tables]
-      if (isEditingTable) {
-        updatedTables = updatedTables.map(t => t.id === tableConfig.id ? { ...t, name: tableConfig.name, capacity: tableConfig.capacity } : t)
-      } else {
-        let newId = updatedTables.length > 0 ? Math.max(...updatedTables.map(t => t.id)) + 1 : 1
-        for (let i = 0; i < tableCount; i++) {
-           const sequentialName = tableCount > 1 ? `${tableConfig.name.trim()} ${i + 1}` : tableConfig.name.trim()
-           updatedTables.push({
-             id: newId++, name: sequentialName, capacity: tableConfig.capacity, status: 'available'
-           })
-        }
+  const handleDeleteFloor = async (floorId: number) => {
+    if (window.confirm('Are you sure you want to completely delete this floor and all its tables?')) {
+      try {
+        await fetch('/api/floors', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: floorId })
+        })
+        const remaining = floors.filter(f => f.id !== floorId)
+        setActiveFloorId(remaining.length > 0 ? remaining[0].id : 0)
+        await fetchData()
+      } catch (e) {
+        console.error('Delete floor failed', e)
       }
-      return { ...f, tables: updatedTables }
-    }))
-    setTableModalOpen(false)
+    }
   }
 
-  const handleDeleteTable = (tableId: number) => {
-    setFloors(prev => prev.map(f => f.id === activeFloorId ? { ...f, tables: f.tables.filter(t => t.id !== tableId) } : f))
+  const handleAddFloor = async () => {
+    if (!newFloorName.trim()) return
+    try {
+      const res = await fetch('/api/floors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newFloorName.trim() })
+      })
+      if (res.ok) {
+        const newFloor = await res.json()
+        setActiveFloorId(newFloor.id)
+        setFloorModalOpen(false)
+        setNewFloorName('')
+        await fetchData()
+      }
+    } catch (e) {
+      console.error('Add floor failed', e)
+    }
+  }
+
+  const handleSaveTable = async () => {
+    if (!tableConfig.name.trim()) return
+    try {
+      const method = isEditingTable ? 'PUT' : 'POST'
+      const body = isEditingTable
+        ? { id: tableConfig.id, name: tableConfig.name, capacity: tableConfig.capacity }
+        : { floor_id: activeFloorId, name: tableConfig.name, capacity: tableConfig.capacity, count: tableCount }
+      
+      const res = await fetch('/api/tables', {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      if (res.ok) {
+        setTableModalOpen(false)
+        await fetchData()
+      }
+    } catch (e) {
+      console.error('Save table failed', e)
+    }
+  }
+
+  const handleDeleteTable = async (tableId: number) => {
+    if (window.confirm('Delete this table?')) {
+      try {
+        await fetch('/api/tables', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: tableId })
+        })
+        await fetchData()
+      } catch (e) {
+        console.error('Delete table failed', e)
+      }
+    }
   }
 
   const openTableModal = (table?: any) => {
@@ -82,6 +133,8 @@ export default function AdminFloorsPage() {
     }
     setTableModalOpen(true)
   }
+
+  if (loading) return <div style={{ padding: 24 }}>Loading...</div>
 
   return (
     <div className="animate-fade-in" style={{ position: 'relative' }}>
@@ -156,9 +209,9 @@ export default function AdminFloorsPage() {
       <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 20 }}>
         {[
           { label: 'Total Floors', value: floors.length, color: 'var(--text-primary)' },
-          { label: 'Total Tables', value: floors.reduce((s,f) => s + f.tables.length, 0), color: 'var(--accent-blue)' },
-          { label: 'Total Capacity', value: floors.reduce((s,f) => s + f.tables.reduce((ts,t) => ts + t.capacity, 0), 0), color: 'var(--accent-green)' },
-          { label: 'In Maintenance', value: floors.reduce((s,f) => s + f.tables.filter(t => t.status === 'maintenance').length, 0), color: 'var(--accent-red)' },
+          { label: 'Total Tables', value: floors.reduce((s,f) => s + (f.tables?.length || 0), 0), color: 'var(--accent-blue)' },
+          { label: 'Total Capacity', value: floors.reduce((s,f) => s + (f.tables?.reduce((ts:number,t:any) => ts + t.capacity, 0) || 0), 0), color: 'var(--accent-green)' },
+          { label: 'In Maintenance', value: floors.reduce((s,f) => s + (f.tables?.filter((t:any) => t.status === 'maintenance').length || 0), 0), color: 'var(--accent-red)' },
         ].map(s => (
           <div className="metric-card" key={s.label} style={{ padding: '16px 20px' }}>
             <div className="metric-label">{s.label}</div>
@@ -183,7 +236,7 @@ export default function AdminFloorsPage() {
                 }}
               >
                 {f.name}
-                <span style={{ marginLeft: 8, fontSize: 11, background: '#f0f0f0', borderRadius: 10, padding: '1px 7px', fontWeight: 600 }}>{f.tables.length}</span>
+                <span style={{ marginLeft: 8, fontSize: 11, background: '#f0f0f0', borderRadius: 10, padding: '1px 7px', fontWeight: 600 }}>{f.tables?.length || 0}</span>
               </button>
             ))}
           </div>
@@ -202,7 +255,7 @@ export default function AdminFloorsPage() {
       {activeFloor && (
         <div className="table-card">
           <div className="table-header-row">
-            <span className="table-title">{activeFloor.name} — {activeFloor.tables.length} tables</span>
+            <span className="table-title">{activeFloor.name} — {activeFloor.tables?.length || 0} tables</span>
           </div>
           <table className="data-table">
             <thead>
@@ -215,7 +268,7 @@ export default function AdminFloorsPage() {
               </tr>
             </thead>
             <tbody>
-              {activeFloor.tables.map(t => (
+              {activeFloor.tables?.map((t:any) => (
                 <tr key={t.id} id={`admin-table-${t.id}`}>
                   <td style={{ fontWeight: 700, fontSize: 16 }}>{t.name}</td>
                   <td>
@@ -225,8 +278,8 @@ export default function AdminFloorsPage() {
                     </div>
                   </td>
                   <td><span className={`badge ${statusColors[t.status]?.badge || 'badge-gray'}`}>{t.status}</span></td>
-                  <td style={{ color: t.order ? 'var(--accent-blue)' : 'var(--text-muted)', fontWeight: t.order ? 600 : 400 }}>
-                    {t.order || '—'}
+                  <td style={{ color: t.current_order_id ? 'var(--accent-blue)' : 'var(--text-muted)', fontWeight: t.current_order_id ? 600 : 400 }}>
+                    {t.current_order_id ? `#ORD-${String(t.current_order_id).padStart(4, '0')}` : '—'}
                   </td>
                   <td>
                     <div style={{ display: 'flex', gap: 8 }}>
@@ -238,7 +291,7 @@ export default function AdminFloorsPage() {
               ))}
             </tbody>
           </table>
-          {activeFloor.tables.length === 0 && (
+          {(!activeFloor.tables || activeFloor.tables.length === 0) && (
             <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted)' }}>
               No tables in this floor. Click "Add Table" to create one.
             </div>

@@ -113,8 +113,12 @@ export default function ItemDetailsPanel({
                   style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer', zIndex: 2 }}
                   onChange={(e) => {
                     if (e.target.files && e.target.files[0]) {
-                      const url = URL.createObjectURL(e.target.files[0])
-                      setProduct({ ...product, image: url })
+                      const file = e.target.files[0]
+                      const reader = new FileReader()
+                      reader.onloadend = () => {
+                        setProduct({ ...product, image: reader.result as string })
+                      }
+                      reader.readAsDataURL(file)
                     }
                   }}
                 />

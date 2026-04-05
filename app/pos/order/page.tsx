@@ -1,8 +1,26 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { Search, Hash, Plus, Minus, X, CreditCard, ChefHat, User, MonitorPlay, Utensils, CheckCircle2 } from 'lucide-react'
-import { menuItems, menuCategories } from '@/lib/mockData'
-import PaymentCheckoutModal from '@/components/PaymentCheckoutModal'
+import { useLocalStorageState } from '@/hooks/useLocalStorageState'
+
+const itemImages: Record<string, string> = {
+  'Masala Dosa': 'https://upload.wikimedia.org/wikipedia/commons/3/34/Paper_Masala_Dosa.jpg',
+  'Idli Sambar (2 pcs)': 'https://upload.wikimedia.org/wikipedia/commons/1/11/Idli_Sambar.JPG',
+  'Vada': 'https://upload.wikimedia.org/wikipedia/commons/1/1d/Medu_vada.jpg',
+  'Paneer Butter Masala': 'https://upload.wikimedia.org/wikipedia/commons/c/ce/Paneer_Butter_Masala.jpg',
+  'Butter Naan': 'https://upload.wikimedia.org/wikipedia/commons/0/02/Naan_bread.jpg',
+  'Veg Biryani': 'https://upload.wikimedia.org/wikipedia/commons/5/5a/Veg_Biryani.jpg',
+  'Dal Makhani': 'https://upload.wikimedia.org/wikipedia/commons/0/03/Dal_Makhni.jpg',
+  'Filter Coffee': 'https://upload.wikimedia.org/wikipedia/commons/a/ae/South_Indian_Filter_Coffee.jpg',
+  'Masala Chai': 'https://upload.wikimedia.org/wikipedia/commons/2/23/Masala_Chai.JPG',
+  'Mango Lassi': 'https://upload.wikimedia.org/wikipedia/commons/c/ca/Mango_Lassi.jpg',
+  'Fresh Lime Soda': 'https://upload.wikimedia.org/wikipedia/commons/6/60/Nimbu_Pani.jpg',
+  'Gulab Jamun': 'https://upload.wikimedia.org/wikipedia/commons/c/c4/Gulab_jamun_%28Dessert%29.jpg',
+  'Rasgulla': 'https://upload.wikimedia.org/wikipedia/commons/1/1e/Rasgulla_-_A_sweet_made_from_milk_%28Cottage_Cheese%29.jpg',
+  'Samosa (2 pcs)': 'https://upload.wikimedia.org/wikipedia/commons/c/cb/Samosachutney.jpg',
+  'Pav Bhaji': 'https://upload.wikimedia.org/wikipedia/commons/4/4a/Pav_Bhaji.jpg',
+}
 
 type OrderLine = {
   id: string
@@ -15,15 +33,40 @@ type OrderLine = {
 }
 
 export default function POSOrderPage() {
+  const router = useRouter()
   const [activeCategory, setActiveCategory] = useState('All')
   const [search, setSearch] = useState('')
-  const [cart, setCart] = useState<OrderLine[]>([])
-  const [orderState, setOrderState] = useState<'Draft' | 'Confirmed' | 'Kitchen' | 'Served' | 'Paid'>('Draft')
+  const [cart, setCart] = useLocalStorageState<OrderLine[]>('pos_active_cart', [])
+  const [orderState, setOrderState] = useLocalStorageState<'Draft' | 'Confirmed' | 'Kitchen' | 'Served' | 'Paid'>('pos_active_order_state', 'Draft')
+  const [currentOrderId, setCurrentOrderId] = useLocalStorageState<number | null>('pos_active_order_id', null)
+  const [orderNumber, setOrderNumber] = useLocalStorageState<string | null>('pos_active_order_number', null)
+  
   const [orderType, setOrderType] = useState('Table 4')
   const [variantModalOpen, setVariantModalOpen] = useState(false)
   const [selectedProduct, setSelectedProduct] = useState<any>(null)
   const [tableModalOpen, setTableModalOpen] = useState(false)
-  const [paymentModalOpen, setPaymentModalOpen] = useState(false)
+
+  const [menuItems, setMenuItems] = useState<any[]>([])
+  const [categories, setCategories] = useState<string[]>(['All'])
+
+  useEffect(() => {
+    const loadMenus = async () => {
+      try {
+        const [prodRes, catRes] = await Promise.all([
+          fetch('/api/products'),
+          fetch('/api/categories')
+        ])
+        if (prodRes.ok) setMenuItems(await prodRes.json())
+        if (catRes.ok) {
+          const cats = await catRes.json()
+          setCategories(['All', ...cats.map((c: any) => c.name)])
+        }
+      } catch (e) {
+        console.error('Failed to load menu items', e)
+      }
+    }
+    loadMenus()
+  }, [])
 
   const filteredItems = menuItems.filter(item => {
     const matchCat = activeCategory === 'All' || item.category === activeCategory
@@ -32,12 +75,16 @@ export default function POSOrderPage() {
   })
 
   const handleItemClick = (item: any) => {
-    setSelectedProduct(item)
-    setVariantModalOpen(true)
+    if (item.variants && Array.isArray(item.variants) && item.variants.length > 0) {
+      setSelectedProduct(item)
+      setVariantModalOpen(true)
+    } else {
+      addToCart(item, '', 0)
+    }
   }
 
   const addToCart = (item: any, variantLabel: string, variantPriceAdd: number) => {
-    const finalPrice = item.price + variantPriceAdd
+    const finalPrice = Number(item.price) + variantPriceAdd
     const finalName = variantLabel ? `${item.name} (${variantLabel})` : item.name
     const existing = cart.find(c => c.itemId === item.id && c.variant === variantLabel)
     if (existing) {
@@ -49,7 +96,11 @@ export default function POSOrderPage() {
         qty: 1, taxRate: item.tax, variant: variantLabel
       }])
     }
-    if (orderState !== 'Draft') setOrderState('Draft')
+    if (orderState !== 'Draft') {
+      setOrderState('Draft')
+      setCurrentOrderId(null)
+      setOrderNumber(null)
+    }
     setVariantModalOpen(false)
   }
 
@@ -58,23 +109,108 @@ export default function POSOrderPage() {
       if (c.id === id) { const newQty = Math.max(0, c.qty + delta); return { ...c, qty: newQty } }
       return c
     }).filter(c => c.qty > 0))
-    if (orderState !== 'Draft') setOrderState('Draft')
+    if (orderState !== 'Draft') {
+      setOrderState('Draft')
+      setCurrentOrderId(null)
+      setOrderNumber(null)
+    }
   }
 
   const subtotal = cart.reduce((acc, c) => acc + (c.price * c.qty), 0)
   const taxTotal = cart.reduce((acc, c) => acc + ((c.price * c.qty) * (c.taxRate / 100)), 0)
   const grandTotal = subtotal + taxTotal
 
-  const handleConfirm = () => setOrderState('Confirmed')
-  const handleSendToKitchen = () => setOrderState('Kitchen')
-  const handleServe = () => setOrderState('Served')
-  const handlePay = () => { setPaymentModalOpen(true) }
+  const handleConfirm = async () => {
+    try {
+      // Extract table_id from orderType (e.g. "Table 4" -> look up table id)
+      let tableId = null
+      const tableMatch = orderType.match(/Table\s+(\d+)/i)
+      if (tableMatch) {
+        // Use the table number to find the actual table ID from the API
+        try {
+          const tablesRes = await fetch('/api/tables')
+          if (tablesRes.ok) {
+            const tables = await tablesRes.json()
+            const tableName = `T${tableMatch[1]}`
+            const found = tables.find((t: any) => t.name === tableName || t.name === `Table ${tableMatch[1]}`)
+            if (found) tableId = found.id
+          }
+        } catch {}
+      }
 
-  const completePaymentProcess = () => {
-    setPaymentModalOpen(false)
-    setOrderState('Paid')
-    setTimeout(() => { setCart([]); setOrderState('Draft') }, 2000)
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          table_id: tableId,
+          source: orderType.includes('Table') ? 'cashier' : 'takeaway',
+          items: cart
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setCurrentOrderId(data.id)
+        setOrderNumber(data.order_number)
+        setOrderState('Confirmed')
+      }
+    } catch (e) {
+      console.error('Confirm order failed', e)
+    }
   }
+
+  const handleSendToKitchen = async () => {
+    let orderId = currentOrderId
+
+    // If order hasn't been confirmed yet, confirm it first
+    if (!orderId && cart.length > 0) {
+      try {
+        const res = await fetch('/api/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source: orderType.includes('Table') ? 'cashier' : 'takeaway',
+            items: cart
+          })
+        })
+        if (res.ok) {
+          const data = await res.json()
+          orderId = data.id
+          setCurrentOrderId(data.id)
+          setOrderNumber(data.order_number)
+        }
+      } catch (e) {
+        console.error('Auto-confirm before kitchen failed', e)
+      }
+    }
+
+    if (orderId) {
+      try {
+        await fetch(`/api/orders/${orderId}/send-to-kitchen`, {
+          method: 'POST'
+        })
+        setOrderState('Kitchen')
+      } catch (e) {
+        console.error('Send to kitchen failed', e)
+      }
+    }
+  }
+
+  const handleServe = async () => {
+    if (currentOrderId) {
+      try {
+        await fetch(`/api/orders/${currentOrderId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'served' })
+        })
+      } catch (e) {
+        console.error('Serve order failed', e)
+      }
+    }
+    setOrderState('Served')
+  }
+
+  const handlePay = () => { router.push('/pos/payment') }
 
   return (
     <div style={{ display: 'flex', height: 'calc(100vh - 56px)', position: 'relative' }}>
@@ -83,16 +219,23 @@ export default function POSOrderPage() {
            <div className="animate-slide-in" style={{ width: 400, background: 'var(--bg-card)', borderRadius: 16, padding: 24, boxShadow: 'var(--shadow-lg)' }}>
              <h3 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{selectedProduct.name} - Select Variant</h3>
              <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>Choose a size or variation.</p>
-             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24 }}>
-                <button className="btn btn-secondary" style={{ display: 'flex', justifyContent: 'space-between', padding: 16 }} onClick={() => addToCart(selectedProduct, 'Regular', 0)}>
-                  <span>Regular</span><span style={{ fontWeight: 700 }}>₹{selectedProduct.price}</span>
+             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 24, maxHeight: 300, overflowY: 'auto' }}>
+                <button className="btn btn-secondary" style={{ display: 'flex', justifyContent: 'space-between', padding: 16 }} onClick={() => addToCart(selectedProduct, '', 0)}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                    <span>Regular</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Base Price</span>
+                  </div>
+                  <span style={{ fontWeight: 700 }}>₹{Number(selectedProduct.price)}</span>
                 </button>
-                <button className="btn btn-secondary" style={{ display: 'flex', justifyContent: 'space-between', padding: 16 }} onClick={() => addToCart(selectedProduct, 'Large', 40)}>
-                  <span>Large (+₹40)</span><span style={{ fontWeight: 700 }}>₹{selectedProduct.price + 40}</span>
-                </button>
-                <button className="btn btn-secondary" style={{ display: 'flex', justifyContent: 'space-between', padding: 16 }} onClick={() => addToCart(selectedProduct, 'Extra Large', 80)}>
-                  <span>Extra Large (+₹80)</span><span style={{ fontWeight: 700 }}>₹{selectedProduct.price + 80}</span>
-                </button>
+                {selectedProduct.variants && typeof selectedProduct.variants === 'object' && Array.isArray(selectedProduct.variants) && selectedProduct.variants.map((v: any, i: number) => (
+                  <button key={i} className="btn btn-secondary" style={{ display: 'flex', justifyContent: 'space-between', padding: 16 }} onClick={() => addToCart(selectedProduct, `${v.name}: ${v.option}`, Number(v.extraPrice) || 0)}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                      <span style={{ fontWeight: 600 }}>{v.option}</span>
+                      <span style={{ fontSize: 11, color: 'var(--accent-blue)' }}>{v.name} {v.extraPrice > 0 ? `(+₹${v.extraPrice})` : ''}</span>
+                    </div>
+                    <span style={{ fontWeight: 700 }}>₹{Number(selectedProduct.price) + (Number(v.extraPrice) || 0)}</span>
+                  </button>
+                ))}
              </div>
              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
                <button className="btn btn-ghost" onClick={() => setVariantModalOpen(false)}>Cancel</button>
@@ -120,13 +263,6 @@ export default function POSOrderPage() {
         </div>
       )}
 
-      <PaymentCheckoutModal 
-         isOpen={paymentModalOpen}
-         onClose={() => setPaymentModalOpen(false)}
-         totalAmount={grandTotal}
-         onPaymentComplete={completePaymentProcess}
-      />
-
       {/* LEFT: Products Grid */}
       <div style={{ flex: 1, padding: '24px 32px', display: 'flex', flexDirection: 'column', background: 'var(--bg-canvas)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -141,7 +277,7 @@ export default function POSOrderPage() {
         </div>
 
         <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 16, marginBottom: 8, borderBottom: '1px solid var(--border-default)' }}>
-          {menuCategories.map(cat => (
+          {categories.map(cat => (
              <button key={cat} onClick={() => setActiveCategory(cat)}
                style={{ padding: '10px 20px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--border-default)', fontSize: 13, fontWeight: 600, background: activeCategory === cat ? 'var(--text-primary)' : 'white', color: activeCategory === cat ? 'white' : 'var(--text-primary)', cursor: 'pointer', whiteSpace: 'nowrap', transition: 'all 0.15s ease' }}
              >{cat}</button>
@@ -150,22 +286,39 @@ export default function POSOrderPage() {
 
         <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, paddingBottom: 24 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 16 }}>
-            {filteredItems.map(item => (
+            {filteredItems.map(item => {
+              const getDishTheme = (name: string) => {
+                if (name.includes('Coffee') || name.includes('Espresso') || name.includes('Cappuccino') || name.includes('Latte')) return { emoji: '☕', bg: '#FFF7ED', color: '#C2410C' }
+                if (name.includes('Chai')) return { emoji: '🫖', bg: '#FFF7ED', color: '#C2410C' }
+                if (name.includes('Lassi') || name.includes('Mojito') || name.includes('Soda')) return { emoji: '🍹', bg: '#F0FDF4', color: '#15803D' }
+                if (name.includes('Croissant')) return { emoji: '🥐', bg: '#FEFCE8', color: '#A16207' }
+                if (name.includes('Muffin')) return { emoji: '🧁', bg: '#FDF2F8', color: '#BE185D' }
+                if (name.includes('Cheesecake') || name.includes('Jamun')) return { emoji: '🍰', bg: '#FEF2F2', color: '#B91C1C' }
+                if (name.includes('Toast') || name.includes('Sandwich')) return { emoji: '🥪', bg: '#FFFBEB', color: '#B45309' }
+                if (name.includes('Samosa')) return { emoji: '🥟', bg: '#FFF7ED', color: '#C2410C' }
+                if (name.includes('Pav Bhaji') || name.includes('Paneer')) return { emoji: '🥘', bg: '#FEF2F2', color: '#B91C1C' }
+                if (name.includes('Dosa')) return { emoji: '🌯', bg: '#FEFCE8', color: '#A16207' }
+                if (name.includes('Biryani')) return { emoji: '🍛', bg: '#F0FDF4', color: '#15803D' }
+                return { emoji: '🍽️', bg: '#F3F4F6', color: '#4B5563' }
+              }
+              const theme = getDishTheme(item.name);
+              
+              return (
               <button key={item.id} onClick={() => handleItemClick(item)}
-                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-lg)', padding: 0, overflow: 'hidden', cursor: 'pointer', textAlign: 'left', display: 'flex', flexDirection: 'column', height: 140, transition: 'transform 0.1s ease' }}
+                style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', borderRadius: 'var(--radius-lg)', padding: 0, overflow: 'hidden', cursor: 'pointer', textAlign: 'left', display: 'flex', flexDirection: 'column', height: 140, transition: 'transform 0.1s ease', position: 'relative' }}
                 onMouseDown={e => e.currentTarget.style.transform = 'scale(0.97)'}
                 onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
                 onMouseLeave={e => e.currentTarget.style.transform = 'scale(1)'}
               >
-                <div style={{ height: 75, background: 'var(--accent-blue-light)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <span style={{ fontSize: 24 }}>🍽️</span>
+                <div style={{ height: 80, background: theme.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <span style={{ fontSize: 38, filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.15))' }}>{theme.emoji}</span>
                 </div>
                 <div style={{ padding: '8px 12px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.2 }}>{item.name}</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)' }}>₹{item.price}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>{item.name}</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text-secondary)' }}>₹{item.price}</div>
                 </div>
               </button>
-            ))}
+            )})}
           </div>
         </div>
       </div>
@@ -176,7 +329,7 @@ export default function POSOrderPage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>Current Order</h2>
             <div style={{ fontSize: 12, fontWeight: 700, padding: '4px 8px', background: orderState === 'Draft' ? 'var(--bg-canvas)' : 'var(--accent-blue-light)', color: orderState === 'Draft' ? 'var(--text-muted)' : 'var(--accent-blue)', borderRadius: 6 }}>
-              {orderState === 'Draft' ? '#ORD-NEW' : '#ORD-1090'}
+              {orderState === 'Draft' ? '#ORD-NEW' : (orderNumber || `#ORD-1090`)}
             </div>
           </div>
           <div onClick={() => setTableModalOpen(true)} style={{ width: '100%', background: 'var(--bg-canvas)', padding: '8px 12px', borderRadius: 'var(--radius-md)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>

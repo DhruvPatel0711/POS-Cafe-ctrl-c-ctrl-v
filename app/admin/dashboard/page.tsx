@@ -1,7 +1,7 @@
 'use client'
+import { useState, useEffect } from 'react'
 import { BarChart3, ShoppingBag, CreditCard, Users, TrendingUp, Clock, ChefHat, LayoutGrid } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
-import { salesChartData, recentOrders, weeklyData, paymentBreakdown } from '@/lib/mockData'
 import Link from 'next/link'
 
 const statusMap: Record<string, string> = {
@@ -9,9 +9,47 @@ const statusMap: Record<string, string> = {
   kitchen:   'badge-orange',
   confirmed: 'badge-blue',
   draft:     'badge-gray',
+  served:    'badge-blue',
 }
 
 export default function AdminDashboard() {
+  const [data, setData] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const fetchDashboard = async () => {
+      try {
+        const res = await fetch('/api/reports/dashboard')
+        if (res.ok) {
+          setData(await res.json())
+        }
+      } catch (e) {
+        console.error('Failed to load dashboard', e)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchDashboard()
+  }, [])
+
+  if (loading) {
+    return <div style={{ padding: 40 }}>Loading Dashboard...</div>
+  }
+
+  if (!data) {
+    return <div style={{ padding: 40 }}>Error loading dashboard data.</div>
+  }
+
+  const { paymentBreakdown, salesChartData, recentOrders, revenue, orderCount, avgOrderValue, activeTables } = data
+  const summary = {
+    todaysRevenue: revenue || 0,
+    revenueChange: '+8.4%',
+    ordersToday: orderCount || 0,
+    ordersChange: '+12',
+    avgOrderValue: avgOrderValue || 0,
+    aovChange: '+2.1%'
+  }
+
   return (
     <div className="animate-fade-in">
       <div className="page-header">
@@ -31,10 +69,10 @@ export default function AdminDashboard() {
       {/* KPI Cards */}
       <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 24 }}>
         {[
-          { label: "Today's Revenue",  value: '₹49,200', change: '+12.4%', icon: TrendingUp, color: 'var(--accent-green)'  },
-          { label: 'Orders Today',     value: '162',      change: '+8',     icon: ShoppingBag, color: 'var(--accent-blue)'   },
-          { label: 'Avg. Order Value', value: '₹304',     change: '+₹18',   icon: CreditCard,  color: 'var(--accent-orange)' },
-          { label: 'Active Tables',    value: '6 / 15',   change: '40%',    icon: LayoutGrid,   color: 'var(--text-primary)'  },
+          { label: "Today's Revenue",  value: `₹${summary.todaysRevenue.toLocaleString()}`, change: summary.revenueChange, icon: TrendingUp, color: 'var(--accent-green)'  },
+          { label: 'Orders Today',     value: summary.ordersToday,      change: summary.ordersChange,     icon: ShoppingBag, color: 'var(--accent-blue)'   },
+          { label: 'Avg. Order Value', value: `₹${summary.avgOrderValue.toLocaleString()}`,     change: summary.aovChange,   icon: CreditCard,  color: 'var(--accent-orange)' },
+          { label: 'Active Tables',    value: activeTables || 'N/A',   change: '',    icon: LayoutGrid,   color: 'var(--text-primary)'  },
         ].map(kpi => {
           const Icon = kpi.icon
           return (
@@ -77,14 +115,16 @@ export default function AdminDashboard() {
         {/* Payment Methods */}
         <div className="chart-card" style={{ marginBottom: 0, padding: 24 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 20 }}>Payment Split</h3>
-          {paymentBreakdown.map(p => (
+          {paymentBreakdown.length === 0 ? (
+            <div style={{ color: 'var(--text-muted)', fontSize: 13, textAlign: 'center', marginTop: 40 }}>No payments today</div>
+          ) : paymentBreakdown.map((p: any) => (
             <div key={p.method} style={{ marginBottom: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 13 }}>
                 <span style={{ fontWeight: 600 }}>{p.method}</span>
                 <span style={{ fontWeight: 700 }}>₹{p.amount.toLocaleString()}</span>
               </div>
               <div style={{ height: 6, background: '#f0f0f0', borderRadius: 6, overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${p.pct}%`, background: p.color, borderRadius: 6 }} />
+                <div style={{ height: '100%', width: `${Math.round(p.pct)}%`, background: p.color, borderRadius: 6 }} />
               </div>
             </div>
           ))}
@@ -104,7 +144,6 @@ export default function AdminDashboard() {
             <tr>
               <th>Order ID</th>
               <th>Table</th>
-              <th>Staff</th>
               <th>Items</th>
               <th>Amount</th>
               <th>Status</th>
@@ -112,17 +151,21 @@ export default function AdminDashboard() {
             </tr>
           </thead>
           <tbody>
-            {recentOrders.slice(0, 5).map(o => (
+            {(recentOrders || []).slice(0, 5).map((o: any) => (
               <tr key={o.id}>
                 <td style={{ fontWeight: 600, color: 'var(--accent-blue)' }}>{o.id}</td>
                 <td>{o.table}</td>
-                <td style={{ color: 'var(--text-secondary)' }}>{o.staff}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{o.items} items</td>
                 <td style={{ fontWeight: 700 }}>₹{o.amount.toLocaleString()}</td>
-                <td><span className={`badge ${statusMap[o.status]}`}>{o.status}</span></td>
+                <td><span className={`badge ${statusMap[o.status] || 'badge-gray'}`}>{o.status}</span></td>
                 <td style={{ color: 'var(--text-muted)', fontSize: 12.5 }}>{o.time}</td>
               </tr>
             ))}
+            {(!recentOrders || recentOrders.length === 0) && (
+              <tr>
+                <td colSpan={6} style={{ textAlign: 'center', padding: 24, color: 'var(--text-muted)' }}>No recent orders</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

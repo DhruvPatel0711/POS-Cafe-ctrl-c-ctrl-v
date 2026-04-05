@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/app/lib/prisma";
-import { verifyToken } from "@/app/lib/auth";
+import { query } from "@/lib/db";
+import { verifyToken } from "@/lib/auth-server";
+import { User } from "@/app/lib/db-types";
 
 export async function GET(req: NextRequest) {
   try {
@@ -26,16 +27,11 @@ export async function GET(req: NextRequest) {
     }
 
     // Retrieve full user from database
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        createdAt: true,
-      },
-    });
+    const result = await query<User>(
+      'SELECT id, name, email, role, "createdAt" FROM "User" WHERE id = $1',
+      [decoded.userId]
+    );
+    const user = result.rows[0];
 
     if (!user) {
       return NextResponse.json(

@@ -1,30 +1,68 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell, Legend } from 'recharts'
-import { weeklyData, menuItems, paymentBreakdown, staffMembers } from '@/lib/mockData'
+import { staffMembers } from '@/lib/mockData'
 import { ChevronDown, Download, Filter, Calendar } from 'lucide-react'
-
-const topItems = [...menuItems].sort((a, b) => b.sold - a.sold).slice(0, 8)
 
 const COLORS = ['#1a1a1a', '#006aff', '#00b259', '#f5a623', '#e22134', '#7b5ea7', '#00b4d8', '#ff6b6b']
 
 export default function ReportsPage() {
-  const [period, setPeriod] = useState('Today')
+  const [period, setPeriod] = useState('This Week')
   const [reportType, setReportType] = useState('Sales')
   const [staffFilter, setStaffFilter] = useState('All Staff')
-  const [sessionFilter, setSessionFilter] = useState('All Sessions')
   const [categoryFilter, setCategoryFilter] = useState('All Categories')
   const [isExporting, setIsExporting] = useState(false)
+
+  const [salesData, setSalesData] = useState<any[]>([])
+  const [productsData, setProductsData] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/reports/sales').then(res => res.json()),
+      fetch('/api/reports/products').then(res => res.json())
+    ]).then(([s, p]) => {
+      setSalesData(s || [])
+      setProductsData(p || [])
+      setLoading(false)
+    }).catch(err => {
+      console.error('Failed to load reports', err)
+      setLoading(false)
+    })
+  }, [])
 
   const handleExport = () => {
     setIsExporting(true)
     setTimeout(() => {
-      const csvStr = `Report Type: ${reportType}\nPeriod: ${period}\nStaff: ${staffFilter}\nCategory: ${categoryFilter}\n\nMetrics Data:\nMetric,Value\nNet Revenue,314200\nGross Sales,338000\nDiscounts,14200`
+      let csvStr = `Report Type: ${reportType}\nPeriod: ${period}\nStaff: ${staffFilter}\nCategory: ${categoryFilter}\n\n`
+      
+      if (reportType === 'Sales') {
+         csvStr += "Day,Sales (INR)\n"
+         salesData.forEach(s => {
+            csvStr += `${s.day},${s.sales}\n`
+         })
+         const totalSalesRevenue = salesData.reduce((acc, r) => acc + r.sales, 0)
+         const todaySales = salesData.length > 0 ? salesData[salesData.length - 1].sales : 0
+         csvStr += `\nNet Revenue,${totalSalesRevenue}\nToday Sales,${todaySales}\n`
+      } else if (reportType === 'Products') {
+         csvStr += "Item,Category,Units Sold,Revenue (INR)\n"
+         productsData.filter(i => categoryFilter === 'All Categories' || i.category === categoryFilter).forEach(p => {
+            csvStr += `"${p.name}","${p.category}",${p.sold},${p.revenue}\n`
+         })
+      } else if (reportType === 'Staff Performance') {
+         csvStr += "Staff Name,Role,Total Orders,Total Sales (INR)\n"
+         staffMembers.filter(s => staffFilter === 'All Staff' || s.name === staffFilter).forEach(s => {
+            csvStr += `"${s.name}","${s.role}",${s.orders},${s.sales}\n`
+         })
+      } else {
+         csvStr += "No export data available for this configuration."
+      }
+
       const blob = new Blob([csvStr], { type: 'text/csv' })
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `cafe-report-${reportType.toLowerCase()}-${new Date().toISOString().split('T')[0]}.csv`
+      a.download = `cafe-report-${reportType.toLowerCase().replace(/\s+/g,'-')}-${new Date().toISOString().split('T')[0]}.csv`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -33,14 +71,18 @@ export default function ReportsPage() {
     }, 800)
   }
 
-  // Mock filtered staff based on role implicitly representing 'category' of staff for demo
   const filteredStaff = staffMembers.filter(s => {
     if (staffFilter === 'All Staff') return true
     return s.name === staffFilter
   })
 
-  // Mock filtered weekly data based on period
-  const activeWeeklyData = period === 'Today' ? [weeklyData[0]] : period === 'This Week' ? weeklyData : weeklyData.map(d => ({ ...d, sales: d.sales * 4 }))
+  // Basic totals calculation
+  const totalSalesRevenue = salesData.reduce((acc, r) => acc + r.sales, 0)
+  const todaySales = salesData.length > 0 ? salesData[salesData.length - 1].sales : 0
+
+  if (loading) {
+    return <div style={{ padding: 40 }}>Loading reports...</div>
+  }
 
   return (
     <div className="animate-fade-in">
@@ -57,7 +99,7 @@ export default function ReportsPage() {
       </div>
 
       <div style={{ display: 'flex', gap: 0, marginBottom: 24, borderBottom: '1px solid var(--border-light)' }}>
-        {['Sales', 'Products', 'Staff Performance', 'Sessions', 'Payments'].map(t => (
+        {['Sales', 'Products', 'Staff Performance', 'Sessions'].map(t => (
           <button
             key={t}
             onClick={() => setReportType(t)}
@@ -108,10 +150,10 @@ export default function ReportsPage() {
         <>
           <div className="metrics-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 24 }}>
             {[
-              { label: 'Net Revenue',  value: period === 'Today' ? '₹49,200' : '₹3,14,200', sub: '+8.4% vs last period'  },
-              { label: 'Gross Sales',  value: period === 'Today' ? '₹51,000' : '₹3,38,000', sub: '+9.1% vs last period' },
-              { label: 'Discounts',    value: period === 'Today' ? '₹1,200' : '₹14,200',   sub: '-3.2% vs last period'  },
-              { label: 'Taxes Collected',value: period === 'Today' ? '₹600' : '₹9,600',  sub: '+1.4% vs last period'     },
+              { label: 'Net Revenue',  value: period === 'Today' ? `₹${todaySales.toLocaleString()}` : `₹${totalSalesRevenue.toLocaleString()}`, sub: '+8.4% vs last period'  },
+              { label: 'Gross Sales',  value: period === 'Today' ? `₹${todaySales.toLocaleString()}` : `₹${totalSalesRevenue.toLocaleString()}`, sub: '+9.1% vs last period' },
+              { label: 'Discounts',    value: period === 'Today' ? '₹0' : '₹1,200',   sub: '-3.2% vs last period'  },
+              { label: 'Taxes Collected',value: period === 'Today' ? '₹0' : '₹900',  sub: '+1.4% vs last period'     },
             ].map(m => (
               <div className="metric-card" key={m.label}>
                 <div className="metric-label">{m.label}</div>
@@ -127,7 +169,7 @@ export default function ReportsPage() {
                 <div className="chart-title">Sales Trend</div>
               </div>
               <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={activeWeeklyData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                <BarChart data={salesData} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                   <XAxis dataKey="day" tick={{ fontSize: 11, fill: '#9b9b9b' }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fontSize: 11, fill: '#9b9b9b' }} axisLine={false} tickLine={false}
@@ -162,7 +204,7 @@ export default function ReportsPage() {
       {reportType === 'Products' && (
         <div className="table-card" style={{ animation: 'fadeIn 0.2s ease' }}>
           <div className="table-header-row">
-            <span className="table-title">Product & Category Analytics</span>
+            <span className="table-title">Product Analytics</span>
           </div>
           <table className="data-table">
             <thead>
@@ -176,14 +218,14 @@ export default function ReportsPage() {
               </tr>
             </thead>
             <tbody>
-              {topItems.filter(i => categoryFilter === 'All Categories' || i.category === categoryFilter).map((item, i) => (
+              {productsData.filter(i => categoryFilter === 'All Categories' || i.category === categoryFilter).map((item, i) => (
                 <tr key={item.id}>
                   <td style={{ color: 'var(--text-muted)', fontWeight: 600 }}>{i + 1}</td>
                   <td style={{ fontWeight: 600 }}>{item.name}</td>
                   <td><span className="badge badge-gray">{item.category}</span></td>
                   <td style={{ fontWeight: 700 }}>{item.sold}</td>
                   <td style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
-                    ₹{(item.sold * item.price).toLocaleString()}
+                    ₹{item.revenue.toLocaleString()}
                   </td>
                   <td style={{ fontWeight: 600, color: 'var(--accent-green)' }}>
                     ≈ 48%
@@ -198,7 +240,7 @@ export default function ReportsPage() {
       {reportType === 'Staff Performance' && (
          <div className="table-card" style={{ animation: 'fadeIn 0.2s ease' }}>
            <div className="table-header-row">
-             <span className="table-title">Employee Shift Analytics</span>
+             <span className="table-title">Employee Analytics</span>
            </div>
            <table className="data-table">
              <thead>
@@ -230,42 +272,13 @@ export default function ReportsPage() {
          </div>
       )}
 
-      {reportType === 'Payments' && (
-         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, animation: 'fadeIn 0.2s ease' }}>
-           <div className="chart-card" style={{ marginBottom: 0 }}>
-             <div className="chart-header">
-               <div className="chart-title">Payment Method Breakdown</div>
-             </div>
-             <ResponsiveContainer width="100%" height={260}>
-               <PieChart>
-                 <Pie
-                   data={paymentBreakdown}
-                   dataKey="pct"
-                   nameKey="method"
-                   cx="50%"
-                   cy="50%"
-                   innerRadius={65}
-                   outerRadius={100}
-                   paddingAngle={3}
-                 >
-                   {paymentBreakdown.map((entry, i) => (
-                     <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                   ))}
-                 </Pie>
-                 <Tooltip formatter={(v: any) => [`${v}%`, '']} />
-                 <Legend />
-               </PieChart>
-             </ResponsiveContainer>
-           </div>
-         </div>
-      )}
-
       {reportType === 'Sessions' && (
          <div style={{ padding: 40, textAlign: 'center', background: 'var(--bg-card)', borderRadius: 12 }}>
-            <h3 style={{ fontWeight: 700, fontSize: 16, marginBottom: 8 }}>No Active Data For Filtering</h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>Try adjusting the period or reviewing other tabs.</p>
+            <h3 style={{ fontWeight: 700, fontSize: 16, marginBottom: 8 }}>No Session Data Validated</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>Try starting and closing a POS shift session first.</p>
          </div>
       )}
     </div>
   )
 }
+
